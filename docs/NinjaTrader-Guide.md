@@ -6,7 +6,7 @@ Version 1.0.0 · [Tatanka Trading](https://tatankatrading.com) · Free and open 
 
 The Tatanka AMT Toolkit puts a complete Auction Market Theory read on one chart. This guide covers installing it, setting up the chart, loading levels, alerts and fixing common problems. For the TPO Profile, If/Then and 1hr 21 EMA, see the [other indicators guide](Other-Indicators-Guide.md).
 
-<p align="center"><img src="images/ninjatrader-amt-toolkit.png" width="420" alt="Tatanka AMT Toolkit on a NinjaTrader NQ chart"></p>
+<p align="center"><img src="images/ninjatrader-amt-toolkit.png" width="420" alt="Tatanka AMT Toolkit on a NinjaTrader ES chart"></p>
 
 ## Contents
 
