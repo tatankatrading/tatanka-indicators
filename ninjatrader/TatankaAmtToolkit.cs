@@ -638,14 +638,14 @@ namespace TatankaTrading.AmtToolkit
             bool spikeWindow = MathEx.InSession(b.Start, S.spikeTimeRange), spSession = MathEx.InSession(b.Start, S.sp_rth_session);
             if (newDay)
             {
-                if (td != DateTime.MinValue && dayFull) prevDay = day.Stats(S.cc_va_pct);
+                if (td != DateTime.MinValue && dayFull && day.Rows.Count > 0) prevDay = day.Stats(S.cc_va_pct);
                 if (!S.pd_use_rth && td != DateTime.MinValue) { pdH = tradeH; pdL = tradeL; }
                 NakedRoll(nd, "Daily", dayFull, S.npoc_d_show, S.npoc_w_d, b.Start);
                 dayFull = td != DateTime.MinValue || MathEx.Minute(b.Start) == 1020;
                 day = new Profile(ValueStep(rowMult), S.MaxProfileRows); nd = new Profile(NakedStep(rowMult), S.MaxProfileRows);
                 td = d; dayStart = b.Start; tradeH = b.High; tradeL = b.Low; rule = false; vaEntry = null; rthO = double.NaN;
                 contextHlc = contextVol = 0;
-                above = below = total = 0; trapAlert = false;
+                above = below = total = 0; trapAlert = false; trap = resolved = false;
             }
             else { tradeH = Max(tradeH, b.High); tradeL = Min(tradeL, b.Low); }
             if (newWeek)
@@ -689,7 +689,8 @@ namespace TatankaTrading.AmtToolkit
             bool globex = MathEx.Minute(b.Start) >= S.inv_start_h * 60 || MathEx.Minute(b.Start) < S.inv_end_h * 60 + S.inv_end_m;
             if (globex && MathEx.Valid(settle)) { if (b.Low >= settle) above++; else if (b.High <= settle) below++; total++; }
             bool imbalance = total > 0 && (above == total || below == total);
-            if (imbalance && !resolved) trap = true;
+            // Latch only while overnight bars are being counted, so the prior night's counts can't latch against a new settlement.
+            if (globex && imbalance && !resolved) trap = true;
             if (trap && b.Low <= settle && b.High >= settle) { trap = false; resolved = true; }
             if (S.inv_alert && S.inv_enable && trap && !trapAlert && MathEx.Minute(b.Start) >= S.inv_end_h * 60 + S.inv_end_m && MathEx.Minute(b.Start) < S.inv_end_h * 60 + S.inv_end_m + 30)
             { Event(f, "Inventory", "Inventory Trap Active @ " + Price(settle)); trapAlert = true; }
@@ -727,7 +728,8 @@ namespace TatankaTrading.AmtToolkit
                 if (main.Rows.Count > 0) { profiles.Add(new PastProfile { Profile = main, Stats = main.Stats(S.mvp_val_pct), Start = mainStart, End = b.Start, EndIndex = b.Index }); if (profiles.Count > 12) profiles.RemoveAt(0); }
                 main = new Profile(RowStep(rowMult), S.MaxProfileRows); mainKey = pk; mainStart = b.Start;
             }
-            foreach (Bar q in Aggregate(raw, calc)) { if (mainWindow) main.Add(q, true); if (S.cc_enable) day.Add(q, true); }
+            // Prior-day value is built from the RTH Session for VA only (08:30-15:00 CT by default), the Dalton convention.
+            foreach (Bar q in Aggregate(raw, calc)) { if (mainWindow) main.Add(q, true); if (S.cc_enable && MathEx.InSession(q.Start, S.cc_sess_def)) day.Add(q, true); }
             ProfileStats dev = main.Stats(S.mvp_val_pct);
             UpdateTpo(b, spSession);
             contextHlc += (b.High + b.Low + b.Close) / 3 * b.Volume; contextVol += b.Volume;
@@ -746,7 +748,7 @@ namespace TatankaTrading.AmtToolkit
                 Level pivot = Levels.FirstOrDefault(x => x.Kind == 0);
                 if (pivot != null) { double z = (MathEx.Valid(f.DailyAtr) ? f.DailyAtr : 1) * .005; pivotBias = b.Close > pivot.Price + z ? "BULLISH" : b.Close < pivot.Price - z ? "BEARISH" : "AT PIVOT"; }
             }
-            f.RuleActive = S.cc_enable && S.cc_showFill && MathEx.Valid(rthO) && (rthO > prevDay.Vah || rthO < prevDay.Val);
+            f.RuleActive = S.cc_enable && MathEx.Valid(rthO) && (rthO > prevDay.Vah || rthO < prevDay.Val);
             if (f.RuleActive && pdSession)
             {
                 if (b.Close < prevDay.Vah && b.Close > prevDay.Val)
@@ -1607,6 +1609,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         private DateTime lastPreview = DateTime.MinValue, lastMacro = DateTime.MinValue, lastLevelsRead = DateTime.MinValue;
         private Bar pending;
         private Frame previousFrame;
+        private List<LineItem> pdBeforeRoll;
+        private static bool IsRollingPd(LineItem x) { return x.Name == "pdHigh" || x.Name == "pdLow" || x.Name == "pdOpen"; }
+        private static bool PdRolled(Frame a, Frame b)
+        {
+            foreach (LineItem x in a.Lines.Where(z => IsRollingPd(z)))
+            {
+                LineItem y = b.Lines.FirstOrDefault(z => z.Name == x.Name);
+                if (y != null && Math.Abs(y.Price - x.Price) > 1e-9) return true;
+            }
+            return false;
+        }
         private int committed = -1, firstLiveBar = int.MaxValue;
         private volatile Snapshot snapshot;
         private sealed class Sample
@@ -1656,7 +1669,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     samples = new RenderHistory<Sample>(50000); histogramCache = new ProfileHistogramCache();
                     historicalLines = new List<LineItem>(); publishedHistory = null; terminated = false;
                     sent = new HashSet<string>(); alertTimes = new Queue<DateTime>();
-                    engine = null; pending = null; previousFrame = null; snapshot = null; committed = -1; firstLiveBar = int.MaxValue;
+                    engine = null; pending = null; previousFrame = null; pdBeforeRoll = null; snapshot = null; committed = -1; firstLiveBar = int.MaxValue;
                     capWarned = false; fault = settingsWarning = discordSetupWarning = "";
                     levelsSource = new LevelFileSource(); levelAlerts = new LevelAlertTracker();
                     // A property-grid clone may share copied fields before DataLoaded.
@@ -1695,7 +1708,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (discord != null) discord.Dispose();
                         // NinjaTrader can retain a terminated indicator instance. Release
                         // its histories and profiles without touching property-grid clones.
-                        snapshot = null; previousFrame = null; pending = null; engine = null; daily = null;
+                        snapshot = null; previousFrame = null; pdBeforeRoll = null; pending = null; engine = null; daily = null;
                         samples = null; histogramCache = null; historicalLines = null; publishedHistory = null;
                         minuteBars = null; macroBars = null; levelsSource = null; levelAlerts = null;
                         sent = null; alertTimes = null; runtimeOwner = null;
@@ -1798,9 +1811,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (pending.Index <= committed) return;
             DrainMacro(pending.End);
             Frame f = CalculateFrame(engine, pending);
-            if (previousFrame != null && MathEx.TradingDate(previousFrame.Bar.Start) != MathEx.TradingDate(f.Bar.Start))
+            bool sameDay = previousFrame != null && MathEx.TradingDate(previousFrame.Bar.Start) == MathEx.TradingDate(f.Bar.Start);
+            // pdHigh, pdLow and pdOpen switch to the session that just closed at 15:00. Keep the lines as they stood
+            // before that switch, so each day's history shows the values that were in force during that day.
+            if (sameDay && pdBeforeRoll == null && PdRolled(previousFrame, f)) pdBeforeRoll = previousFrame.Lines.Where(x => IsRollingPd(x)).ToList();
+            if (previousFrame != null && !sameDay)
             {
-                historicalLines.AddRange(previousFrame.Lines.Where(x => x.Name.StartsWith("IB ") || x.Name.StartsWith("pd") || x.Name == "dOpen").Select(x => new LineItem { Name = x.Name, Price = x.Price, Start = x.Start, End = x.End, Color = x.Color, Width = x.Width, Style = x.Style, Label = false }));
+                IEnumerable<LineItem> dayLines = previousFrame.Lines.Where(x => x.Name.StartsWith("IB ") || x.Name == "dOpen" || (x.Name.StartsWith("pd") && (pdBeforeRoll == null || !IsRollingPd(x))));
+                if (pdBeforeRoll != null) dayLines = dayLines.Concat(pdBeforeRoll);
+                historicalLines.AddRange(dayLines.Select(x => new LineItem { Name = x.Name, Price = x.Price, Start = x.Start, End = x.End, Color = x.Color, Width = x.Width, Style = x.Style, Label = false }));
+                pdBeforeRoll = null;
                 historicalLines.RemoveAll(x => (f.Bar.Start - x.End).TotalDays > 20);
                 publishedHistory = null;
             }
@@ -2902,7 +2922,7 @@ public bool mvp_extend_walls { get; set; }
 public int mvp_smooth_len { get; set; }
 [Display(Name="Fixed Mult", GroupName="12. Volume Profile Walls", Order=193)]
 public double mvp_vol_mult { get; set; }
-[Display(Name="Min Wall Distance (ticks)", GroupName="12. Volume Profile Walls", Order=189)]
+[Display(Name="Min Wall Distance (rows)", Description="Minimum gap between walls, counted in profile rows.", GroupName="12. Volume Profile Walls", Order=189)]
 public int mvp_min_wall_dist { get; set; }
 [Display(Name="Wall Width", GroupName="12. Volume Profile Walls", Order=185)]
 public int mvp_w_wall { get; set; }
@@ -3243,7 +3263,7 @@ public string cc_lb_size_in { get; set; }
 [Display(Name="Label Text Color", Description="Transparent (the default) uses each line's own color. Pick any color to override.", GroupName="4. Previous Day Value & 80% Rule", Order=66)]
 public Brush cc_txt_c { get; set; }
 [Browsable(false)] public string cc_txt_cSerialized { get { return Serialize.BrushToString(cc_txt_c); } set { cc_txt_c = Serialize.StringToBrush(value); } }
-[Display(Name="Show 80% Rule Fill", GroupName="4. Previous Day Value & 80% Rule", Order=67)]
+[Display(Name="Show 80% Rule Fill", Description="Shades prior-day value while the 80% Rule is active or confirmed. Display only: the rule, the dashboard row and the alert work either way.", GroupName="4. Previous Day Value & 80% Rule", Order=67)]
 public bool cc_showFill { get; set; }
 [XmlIgnore]
 [Display(Name="Fill: Active (Setup)", GroupName="4. Previous Day Value & 80% Rule", Order=68)]
@@ -3256,7 +3276,7 @@ public Brush cc_col_conf { get; set; }
 [Range(0.01, 1.0)]
 [Display(Name="Value Area %", GroupName="4. Previous Day Value & 80% Rule", Order=51)]
 public double cc_va_pct { get; set; }
-[Display(Name="RTH Session for VA (CT)", GroupName="4. Previous Day Value & 80% Rule", Order=52)]
+[Display(Name="RTH Session for VA (CT)", Description="Bars in this session build the prior-day value (pdPOC, pdVAH, pdVAL). Its first bar is the RTH open used by OPEN, the gap test and the 80% Rule.", GroupName="4. Previous Day Value & 80% Rule", Order=52)]
 public string cc_sess_def { get; set; }
 [Display(Name="Enable Prev Week Levels", GroupName="9. Previous Week", Order=129)]
 public bool pw_enable { get; set; }
@@ -3312,7 +3332,7 @@ public int sp_max_days { get; set; }
 public bool sp_filter_tails { get; set; }
 [Display(Name="Max Tail Size", GroupName="13. TPO & Single Prints", Order=199)]
 public int sp_tail_max { get; set; }
-[Display(Name="Min Single Print Size (ticks)", GroupName="13. TPO & Single Prints", Order=197)]
+[Display(Name="Min Single Print Size (ticks)", Description="Measured from the first to the last block of a single-print run, so the default of 1 needs at least two blocks: the Market Profile convention that a single print takes at least two TPO prices.", GroupName="13. TPO & Single Prints", Order=197)]
 public int sp_min_ticks { get; set; }
 [Display(Name="Show Poor Highs/Lows", GroupName="13. TPO & Single Prints", Order=205)]
 public bool sp_show_poor { get; set; }
