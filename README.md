@@ -17,6 +17,7 @@ None of them give buy/sell signals or trade recommendations.
 
 Guides:
 
+- [Tatanka AMT Toolkit User Guide (PDF)](docs/Tatanka-AMT-Toolkit-User-Guide.pdf): everything the Toolkit draws, how each piece is calculated and every setting
 - [AMT Toolkit on NinjaTrader](docs/NinjaTrader-Guide.md)
 - [AMT Toolkit on TradingView](docs/TradingView-Guide.md)
 - [TPO Profile, If/Then and 1hr 21 EMA](docs/Other-Indicators-Guide.md)
