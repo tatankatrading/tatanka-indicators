@@ -267,14 +267,14 @@ namespace NinjaTrader.NinjaScript.Indicators
 			{
 				double atr = dailyAtr[0];
 				if (!double.IsNaN(atr) && atr > 0)
-					mult = Math.Max(Math.Round(atr / TargetRows / tick), 1.0);
+					mult = Math.Max(Math.Round(atr / TargetRows / tick, MidpointRounding.AwayFromZero), 1.0);
 			}
 			return tick * Math.Max(mult, 1.0);
 		}
 
 		private long PriceKey(double price)
 		{
-			return (long)Math.Round(price / tickStep);
+			return (long)Math.Round(price / tickStep, MidpointRounding.AwayFromZero);
 		}
 
 		private double KeyToPrice(long key)
@@ -337,15 +337,29 @@ namespace NinjaTrader.NinjaScript.Indicators
 				row.Price = KeyToPrice(k);
 				row.Letters = new List<int>(letters);
 				p.Rows.Add(row);
-				if (letters.Count >= p.MaxCount)
-				{
+				if (letters.Count > p.MaxCount)
 					p.MaxCount = letters.Count;
-					p.PocPrice = row.Price;
-				}
 			}
 
 			if (p.Rows.Count == 0)
 				return null;
+
+			// POC: the row with the most TPOs. On a tie, the tied row nearest the middle of the
+			// profile's range (Market Profile convention); if two are equally close, the lower one.
+			// Rows are in ascending price order, so a strict "<" keeps the lower row on an equal distance.
+			double mid = (p.Rows[0].Price + p.Rows[p.Rows.Count - 1].Price) / 2.0;
+			double bestDist = double.MaxValue;
+			foreach (TpoRow r in p.Rows)
+			{
+				if (r.Letters.Count != p.MaxCount)
+					continue;
+				double d = Math.Abs(r.Price - mid);
+				if (d < bestDist - 1e-9)
+				{
+					bestDist = d;
+					p.PocPrice = r.Price;
+				}
+			}
 			return p;
 		}
 
@@ -366,7 +380,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 					pocIdx = i;
 			}
 
-			int target = (int)Math.Round(total * 0.70);
+			int target = (int)Math.Round(total * 0.70, MidpointRounding.AwayFromZero);
 			int cum = p.Rows[pocIdx].Letters.Count;
 			int lowIdx = pocIdx;
 			int highIdx = pocIdx;
