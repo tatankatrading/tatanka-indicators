@@ -1,18 +1,19 @@
 <p align="center"><img src="../assets/logo.png" width="72" alt="Tatanka Trading logo"></p>
 
-# TPO Profile, If/Then and 1hr 21 EMA: Guide
+# TPO Profile, If/Then, 1hr 21 EMA and Level Lines: Guide
 
 Version 1.0.0 · [Tatanka Trading](https://tatankatrading.com) · Free and open source (MPL 2.0)
 
-Three free indicators that sit beside the [Tatanka AMT Toolkit](NinjaTrader-Guide.md). Each one is on NinjaTrader 8 and TradingView.
+Free indicators that sit beside the [Tatanka AMT Toolkit](NinjaTrader-Guide.md). TPO Profile, If/Then and 1hr 21 EMA are on NinjaTrader 8 and TradingView; Level Lines is NinjaTrader 8 only.
 
 | Indicator | TradingView script | NinjaTrader download | NinjaTrader name |
 | --- | --- | --- | --- |
 | TPO Profile | [TPO Profile](https://tatankatrading.com/tv/tpo) | [TatankaTPO_NT8.zip](https://tatankatrading.com/nt/tpo) | TPO Profile |
 | If/Then | [If/Then Bias Table](https://tatankatrading.com/tv/ifthen) | [TatankaIfThen_NT8.zip](https://tatankatrading.com/nt/ifthen) | If/Then Bias Table |
 | 1hr 21 EMA | [HTF EMA (1H 21 by default)](https://tatankatrading.com/tv/21ema) | [Tatanka21EMA_NT8.zip](https://tatankatrading.com/nt/21ema) | HTF EMA (1H 21 by default) |
+| Level Lines | NinjaTrader only | [TatankaLevelLines_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaLevelLines_NT8.zip) | Level Lines |
 
-All four NinjaTrader indicators come in one zip too: [TatankaAll_NT8.zip](https://tatankatrading.com/nt/all).
+The AMT Toolkit, TPO Profile, If/Then and 1hr 21 EMA also come in one zip: [TatankaAll_NT8.zip](https://tatankatrading.com/nt/all). Level Lines is a separate download.
 
 ## Install
 
@@ -63,6 +64,32 @@ The 21-period EMA from the 1-hour chart, drawn on any chart timeframe. Change **
 - **Live:** the developing 1-hour EMA, updating with each bar.
 - **Exact:** the last closed 1-hour EMA, stepping once an hour.
 - **Smooth:** an EMA on your chart's timeframe with a scaled length, so the line curves smoothly. It can drift slightly from the true 1-hour value. NinjaTrader's default.
+
+## Level Lines
+
+NinjaTrader 8 only. Labeled horizontal lines you type in: a range box plus any number of custom lines. Each label sits at the chart's right edge with its price, and labels stack instead of overlapping when two lines are close. Lines outside the visible price range aren't drawn, and they never stretch the chart's price scale.
+
+**1. Range:** set **Range top** and **Range bottom** (0 = off). Optional midpoint line, labels and shading.
+
+**2. Custom levels:** type them into **Levels** (NinjaTrader opens a multi-line editor), one per line or separated by semicolons:
+
+```
+price|label|color|style|width
+```
+
+- Only the price is required. Anything you leave out uses **Default line**.
+- **color:** a name (Orange, Magenta, Gray) or hex (#FF00FF).
+- **style:** Solid, Dash, Dot, DashDot or DashDotDot.
+- Use a period for decimals. Don't put `|` or `;` inside a label.
+
+Example:
+
+```
+7845.75|CURRENT YEARLY VAH|Magenta|Solid|2
+7836.75|NAKED POC|Gray|Dash|1
+```
+
+**3. Labels:** font, price in the label, right or left edge, above or below the line, and a dark background box.
 
 ## Troubleshooting (NinjaTrader)
 
