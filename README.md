@@ -2,7 +2,7 @@
 
 # Tatanka Trading Free Indicators
 
-Four free, open-source Auction Market Theory indicators for **NinjaTrader 8** and **TradingView**, from [Tatanka Trading](https://tatankatrading.com). They're the four tools behind every Tatanka session read.
+Four free, open-source Auction Market Theory indicators for **NinjaTrader 8** and **TradingView**, from [Tatanka Trading](https://tatankatrading.com). They're the four tools behind every Tatanka session read. **Level Lines**, a NinjaTrader 8 tool for labeled range and custom lines, is here too.
 
 None of them give buy/sell signals or trade recommendations.
 
@@ -14,13 +14,14 @@ None of them give buy/sell signals or trade recommendations.
 | **TPO Profile** | TPO (Market Profile) letters for each 30-minute period, with the POC, value area and a heatmap gradient. Full letter detail for recent days, outlines for older ones. | `ninjatrader/TatankaTpoProfile.cs` |
 | **If/Then** | Shows the afternoon review's if/then bias for the zone price is in. Paste the review's block and it updates as price moves between zones. | `ninjatrader/TatankaIfThenBiasTable.cs` |
 | **1hr 21 EMA** | The 1-hour 21-period EMA on any chart timeframe, in live, confirmed or smoothed mode. | `ninjatrader/TatankaHtfEma.cs` |
+| **Level Lines** (NinjaTrader only) | A range box (top, bottom, optional midpoint and shading) plus any number of labeled lines you type in, one per line. | `ninjatrader/TatankaLevelLines.cs` |
 
 Guides:
 
 - [Tatanka AMT Toolkit User Guide (PDF)](docs/Tatanka-AMT-Toolkit-User-Guide.pdf): everything the Toolkit draws, how each piece is calculated and every setting
 - [AMT Toolkit on NinjaTrader](docs/NinjaTrader-Guide.md)
 - [AMT Toolkit on TradingView](docs/TradingView-Guide.md)
-- [TPO Profile, If/Then and 1hr 21 EMA](docs/Other-Indicators-Guide.md)
+- [TPO Profile, If/Then, 1hr 21 EMA and Level Lines](docs/Other-Indicators-Guide.md)
 
 Screenshots and the full feature list: [tatankatrading.com/indicators](https://tatankatrading.com/indicators/)
 
@@ -32,7 +33,8 @@ NinjaTrader 8 (always the latest release):
 - [TatankaTPO_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaTPO_NT8.zip)
 - [TatankaIfThen_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaIfThen_NT8.zip)
 - [Tatanka21EMA_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/Tatanka21EMA_NT8.zip)
-- [TatankaAll_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaAll_NT8.zip) (all four)
+- [TatankaLevelLines_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaLevelLines_NT8.zip)
+- [TatankaAll_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaAll_NT8.zip) (Toolkit, TPO, If/Then and 21 EMA)
 
 TradingView:
 

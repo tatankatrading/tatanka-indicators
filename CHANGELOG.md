@@ -2,6 +2,11 @@
 
 All notable changes to the Tatanka Trading free indicators. Versions match the Toolkit's dashboard header and the version line at the top of each `.cs` file.
 
+## Updates to release v1.0.0
+
+- **October 4, 2026: new Level Lines v1.0.0** (NinjaTrader 8 only). A range box (top, bottom, optional midpoint and shading) plus any number of labeled custom lines, typed one per line as `price|label|color|style|width`. Download `TatankaLevelLines_NT8.zip`.
+- **October 3, 2026: TPO Profile (NinjaTrader).** POC ties now pick the tied row nearest the middle of the profile (the lower one if equally close), and price rows round the same way as TradingView.
+
 ## v1.0.0 (October 2026)
 
 First public release, free and open source under MPL 2.0, on NinjaTrader 8 and TradingView: Tatanka AMT Toolkit, TPO Profile, If/Then Bias Table and HTF EMA (1hr 21 EMA).
