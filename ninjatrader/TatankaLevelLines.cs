@@ -327,11 +327,44 @@ namespace NinjaTrader.NinjaScript.Indicators
 		[Display(Name = "Shade opacity %", Order = 11, GroupName = "1. Range")]
 		public int RangeFillOpacity { get; set; }
 
-		[PropertyEditor("NinjaTrader.Gui.Tools.TatankaLevelLinesEditor")]
-		[Display(Name = "Levels (enter or paste below)", Description = "Separate LEVELS with commas, semicolons, or new lines. Example: 7845.75|VAH, 7830|POC, 7810|VAL. Within each level, use pipes: price|label|color|style|width. Only price is required; 7845.75, 7830, 7810 also works. Use decimal points and no thousands separators. Commas and semicolons are separators, so do not use them inside labels. Colors: names or hex (#FF00FF). Styles: Solid, Dash, Dot, DashDot, DashDotDot. Full example: 7845.75|VAH|Magenta|Dash|2", Order = 1, GroupName = "2. Custom levels")]
+		[XmlIgnore]
+		[RefreshProperties(RefreshProperties.All)]
+		[Display(Name = "Open large levels editor", Description = "Click this checkbox to open a large, resizable text box with examples. Save levels, then click Apply or OK in the indicator settings. The checkbox resets after opening.", Order = 0, GroupName = "2. Custom levels")]
+		public bool OpenCustomLevelsEditor
+		{
+			get { return false; }
+			set
+			{
+				// An action only: never saved in templates or run during indicator cloning.
+				if (!value)
+					return;
+
+				var dialog = new TatankaLevelLinesDialog(CustomLevels);
+				DependencyObject focusedElement = Keyboard.FocusedElement as DependencyObject;
+				Window owner = focusedElement != null ? Window.GetWindow(focusedElement) : null;
+				if (owner != null)
+				{
+					dialog.Owner = owner;
+					dialog.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+				}
+
+				if (dialog.ShowDialog() == true)
+					CustomLevels = dialog.Levels;
+			}
+		}
+
+		[PropertyEditor("NinjaTrader.Gui.Tools.MultilineEditor")]
+		[Display(Name = "Levels (comma / semicolon separated)", Description = "Use Open large levels editor for a roomy text box. Separate LEVELS with commas, semicolons, or new lines. Example: 7845.75|VAH, 7830|POC, 7810|VAL. Within each level, use pipes: price|label|color|style|width. Only price is required; 7845.75, 7830, 7810 also works. Use decimal points and no thousands separators. Commas and semicolons are separators, so do not use them inside labels. Colors: names or hex (#FF00FF). Styles: Solid, Dash, Dot, DashDot, DashDotDot. Full example: 7845.75|VAH|Magenta|Dash|2", Order = 1, GroupName = "2. Custom levels")]
 		public string CustomLevels { get; set; }
 
-		[Display(Name = "Default line", Description = "Used for any field a custom level leaves out.", Order = 2, GroupName = "2. Custom levels")]
+		[XmlIgnore]
+		[Display(Name = "Example (3 levels)", Description = "Copy this example into Levels or the large editor. Commas, semicolons, or new lines separate levels. The | character separates the price from its label. This example does not draw any lines.", Order = 2, GroupName = "2. Custom levels")]
+		public string CustomLevelsExample
+		{
+			get { return "7845.75|VAH, 7830|POC, 7810|VAL"; }
+		}
+
+		[Display(Name = "Default line", Description = "Used for any field a custom level leaves out.", Order = 3, GroupName = "2. Custom levels")]
 		public Stroke DefaultStroke { get; set; }
 
 		[Display(Name = "Label font", Order = 1, GroupName = "3. Labels")]
@@ -352,55 +385,94 @@ namespace NinjaTrader.NinjaScript.Indicators
 	}
 }
 
-// Uses NinjaTrader's bundled System.Windows.Controls.WpfPropertyGrid.dll.
-// Add that DLL through NinjaScript Editor > References once if it is not already referenced.
+// Plain WPF window: uses NinjaTrader's existing references, with no extra DLL setup.
 namespace NinjaTrader.Gui.Tools
 {
-	public class TatankaLevelLinesEditor : System.Windows.Controls.WpfPropertyGrid.PropertyEditor
+	internal sealed class TatankaLevelLinesDialog : Window
 	{
-		public TatankaLevelLinesEditor()
+		private readonly System.Windows.Controls.TextBox levelsInput;
+
+		public string Levels { get { return levelsInput.Text; } }
+
+		public TatankaLevelLinesDialog(string levels)
 		{
-			var panel = new FrameworkElementFactory(typeof(System.Windows.Controls.StackPanel));
+			Title = "Level Lines - Custom levels";
+			Width = 760;
+			Height = 570;
+			MinWidth = 520;
+			MinHeight = 420;
+			WindowStartupLocation = WindowStartupLocation.CenterScreen;
+			ShowInTaskbar = false;
+			Background = SystemColors.WindowBrush;
+			Foreground = SystemColors.WindowTextBrush;
+			FontFamily = new FontFamily("Segoe UI");
+			FontSize = 13;
 
-			var instructions = new FrameworkElementFactory(typeof(System.Windows.Controls.TextBlock));
-			instructions.SetValue(System.Windows.Controls.TextBlock.TextProperty,
-				"Separate levels with commas, semicolons, or new lines. Only the price is required.");
-			instructions.SetValue(System.Windows.Controls.TextBlock.TextWrappingProperty, TextWrapping.Wrap);
-			instructions.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 2, 0, 6));
-			panel.AppendChild(instructions);
+			var panel = new System.Windows.Controls.Grid { Margin = new Thickness(16) };
+			panel.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = GridLength.Auto });
+			panel.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+			panel.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = GridLength.Auto });
+			panel.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = GridLength.Auto });
 
-			var input = new FrameworkElementFactory(typeof(System.Windows.Controls.TextBox));
-			input.Name = "TatankaCustomLevelsInput";
-			input.SetValue(FrameworkElement.HeightProperty, 180.0);
-			input.SetValue(System.Windows.Controls.TextBox.AcceptsReturnProperty, true);
-			input.SetValue(System.Windows.Controls.TextBox.TextWrappingProperty, TextWrapping.Wrap);
-			input.SetValue(System.Windows.Controls.TextBox.VerticalScrollBarVisibilityProperty,
-				System.Windows.Controls.ScrollBarVisibility.Auto);
-			input.SetValue(System.Windows.Controls.Control.VerticalContentAlignmentProperty, VerticalAlignment.Top);
-			input.SetValue(System.Windows.Controls.Control.PaddingProperty, new Thickness(5));
-			input.SetBinding(System.Windows.Controls.TextBox.TextProperty, new System.Windows.Data.Binding("Value")
+			var instructions = new System.Windows.Controls.TextBlock
 			{
-				Mode = System.Windows.Data.BindingMode.TwoWay,
-				UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged,
-				ValidatesOnExceptions = true
+				Text = "Enter or paste your levels below. Separate LEVELS with commas, semicolons, or new lines.\n"
+					+ "Press Enter for a new line. Only the price is required.",
+				TextWrapping = TextWrapping.Wrap,
+				Margin = new Thickness(0, 0, 0, 10)
+			};
+			panel.Children.Add(instructions);
+
+			levelsInput = new System.Windows.Controls.TextBox
+			{
+				Name = "TatankaCustomLevelsInput",
+				Text = levels ?? string.Empty,
+				AcceptsReturn = true,
+				TextWrapping = TextWrapping.Wrap,
+				VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
+				VerticalContentAlignment = VerticalAlignment.Top,
+				Padding = new Thickness(8),
+				Background = SystemColors.WindowBrush,
+				Foreground = SystemColors.WindowTextBrush
+			};
+			System.Windows.Controls.Grid.SetRow(levelsInput, 1);
+			panel.Children.Add(levelsInput);
+
+			var examples = new System.Windows.Controls.TextBlock
+			{
+				Text = "Price only: 7845.75, 7830, 7810\n"
+					+ "With labels: 7845.75|VAH, 7830|POC, 7810|VAL\n\n"
+					+ "Within ONE level, use | (pipe) between fields: price|label|color|style|width\n"
+					+ "Full example: 7845.75|VAH|Magenta|Dash|2\n"
+					+ "Optional color, style, and width use Default line when omitted.\n\n"
+					+ "Use decimal points; no thousands commas. Do not use commas or semicolons inside labels.\n"
+					+ "After saving, click Apply or OK in the indicator settings to update the chart.",
+				TextWrapping = TextWrapping.Wrap,
+				Margin = new Thickness(0, 10, 0, 14)
+			};
+			System.Windows.Controls.Grid.SetRow(examples, 2);
+			panel.Children.Add(examples);
+
+			var buttons = new System.Windows.Controls.StackPanel
+			{
+				Orientation = System.Windows.Controls.Orientation.Horizontal,
+				HorizontalAlignment = HorizontalAlignment.Right
+			};
+			var save = new System.Windows.Controls.Button
+			{
+				Content = "Save levels", IsDefault = true, MinWidth = 100,
+				Padding = new Thickness(10, 5, 10, 5), Margin = new Thickness(0, 0, 8, 0)
+			};
+			save.Click += delegate { DialogResult = true; };
+			buttons.Children.Add(save);
+			buttons.Children.Add(new System.Windows.Controls.Button
+			{
+				Content = "Cancel", IsCancel = true, MinWidth = 90, Padding = new Thickness(10, 5, 10, 5)
 			});
-			input.SetBinding(System.Windows.Controls.TextBox.IsReadOnlyProperty,
-				new System.Windows.Data.Binding("IsReadOnly"));
-			panel.AppendChild(input);
-
-			var examples = new FrameworkElementFactory(typeof(System.Windows.Controls.TextBlock));
-			examples.SetValue(System.Windows.Controls.TextBlock.TextProperty,
-				"Price only: 7845.75, 7830, 7810\n"
-				+ "With labels: 7845.75|VAH, 7830|POC, 7810|VAL\n\n"
-				+ "Within a level, separate fields with | (pipe):\n"
-				+ "price|label|color|style|width\n"
-				+ "Full example: 7845.75|VAH|Magenta|Dash|2\n\n"
-				+ "Use decimal points, with no thousands commas. Do not use commas or semicolons inside labels.");
-			examples.SetValue(System.Windows.Controls.TextBlock.TextWrappingProperty, TextWrapping.Wrap);
-			examples.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 6, 0, 2));
-			panel.AppendChild(examples);
-
-			InlineTemplate = new DataTemplate { VisualTree = panel };
+			System.Windows.Controls.Grid.SetRow(buttons, 3);
+			panel.Children.Add(buttons);
+			Content = panel;
+			Loaded += delegate { levelsInput.Focus(); levelsInput.CaretIndex = levelsInput.Text.Length; };
 		}
 	}
 }
