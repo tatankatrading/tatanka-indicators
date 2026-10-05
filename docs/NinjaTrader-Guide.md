@@ -37,7 +37,9 @@ The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily
 | Trading hours | ETH (the full Globex session) | Data Series → Trading hours |
 | Days to load | 90 (400 if you use the yearly profile) | Data Series → Load data based on |
 | Tick Replay | Off | Data Series |
-| Merge policy | Merge back adjusted | Control Center → Tools → Options → Market Data |
+| Merge policy | Merge non back adjusted | Control Center → Tools → Options → Market Data |
+
+The Toolkit uses the prices your chart loads, so the merge policy decides where levels from before a contract roll sit. *Merge non back adjusted* keeps them at the prices that actually traded, the same as TradingView's default. *Merge back adjusted* shifts them onto the current contract. After changing it, right-click the chart → **Reload All Historical Data**.
 
 Every session time in the Toolkit is CME exchange time (Central). Leave those inputs at their defaults even if you live in another time zone. The Toolkit shows a warning on the chart if one was changed (**1. Global Settings → Warn if Session Times Were Changed**).
 

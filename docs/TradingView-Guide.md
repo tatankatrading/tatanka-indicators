@@ -34,6 +34,7 @@ On the chart it's labeled **Tatanka AMT**.
 - **Timeframe:** a minute chart, for example 5 or 15 minutes.
 - **History:** scroll back far enough for the profile period you use. A yearly profile needs a long history.
 - **Time zone:** every session time in the Toolkit is CME exchange time (Central). Leave those inputs at their defaults. To see your local time, change the chart's time zone instead (bottom-right corner of the chart). If a session input is changed, the Toolkit shows a red warning label on the chart.
+- **Back-adjustment (B-ADJ):** the Toolkit follows the chart's B-ADJ setting (bottom-right corner of the chart). Off, the default, keeps every level at the price that actually traded. On, levels from before a contract roll shift onto the current contract.
 
 ## 3. What you see on the chart
 
@@ -129,6 +130,7 @@ TradingView delivers updates to published scripts; there's nothing to download. 
 | Levels don't draw | Check the line format: date first, then prices, comma-separated, no thousands separators. |
 | Older lines or labels disappear | TradingView allows 500 lines, 500 boxes and 500 labels per script and removes the oldest first. Turn off sections you don't use. |
 | Profiles look shifted around a contract roll | On continuous symbols (ES1!), profiles switch to the new front contract once it out-trades the old one. During a roll week, TradingView's continuous symbol can still follow the expiring contract. |
+| A naked POC or other level sits where price never traded (for example above the all-time high) | B-ADJ is on, so levels from before a roll are back-adjusted. Turn B-ADJ off (bottom-right corner of the chart) to use the prices that actually traded. |
 | Level alerts fire on yesterday's levels | Delete the alert and create it again after pasting new levels. |
 | "Too many indicators" | The free plan limits how many indicators fit on one chart. Remove one, or use a second chart. |
 
