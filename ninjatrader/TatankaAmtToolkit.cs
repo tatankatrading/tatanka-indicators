@@ -1582,7 +1582,28 @@ namespace TatankaTrading.AmtToolkit
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
-    public partial class TatankaAmtToolkit : Indicator
+    [NinjaTrader.Gui.CategoryOrder("1. Global Settings", 1)]
+    [NinjaTrader.Gui.CategoryOrder("2. Daily Levels", 2)]
+    [NinjaTrader.Gui.CategoryOrder("3. Previous Day High/Low/Open", 3)]
+    [NinjaTrader.Gui.CategoryOrder("4. Previous Day Value & 80% Rule", 4)]
+    [NinjaTrader.Gui.CategoryOrder("5. Overnight High/Low", 5)]
+    [NinjaTrader.Gui.CategoryOrder("6. Initial Balance", 6)]
+    [NinjaTrader.Gui.CategoryOrder("7. RTH VWAP", 7)]
+    [NinjaTrader.Gui.CategoryOrder("8. Daily & Weekly Open", 8)]
+    [NinjaTrader.Gui.CategoryOrder("9. Previous Week", 9)]
+    [NinjaTrader.Gui.CategoryOrder("10. Previous Month", 10)]
+    [NinjaTrader.Gui.CategoryOrder("11. Volume Profile", 11)]
+    [NinjaTrader.Gui.CategoryOrder("12. Volume Profile Walls", 12)]
+    [NinjaTrader.Gui.CategoryOrder("13. TPO & Single Prints", 13)]
+    [NinjaTrader.Gui.CategoryOrder("14. Naked POCs", 14)]
+    [NinjaTrader.Gui.CategoryOrder("15. Settlement & Inventory", 15)]
+    [NinjaTrader.Gui.CategoryOrder("16. Late Spike", 16)]
+    [NinjaTrader.Gui.CategoryOrder("17. Dashboard", 17)]
+    [NinjaTrader.Gui.CategoryOrder("18. Alerts", 18)]
+    [NinjaTrader.Gui.CategoryOrder("19. Discord Alerts (Optional)", 19)]
+    [NinjaTrader.Gui.CategoryOrder("20. NinjaTrader Limits", 20)]
+    [NinjaTrader.Gui.CategoryOrder("About", 21)]
+    public class TatankaAmtToolkit : Indicator
     {
         private object sync = new object();
         private Settings cfg;
@@ -2111,33 +2132,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Text(p, f.Values[i], x + w * .44f, y + i * rh + 4, w * .55f, rh, f.Colors[i], fs);
             }
         }
-    }
-}
-
-
-namespace NinjaTrader.NinjaScript.Indicators {
-[NinjaTrader.Gui.CategoryOrder("1. Global Settings", 1)]
-[NinjaTrader.Gui.CategoryOrder("2. Daily Levels", 2)]
-[NinjaTrader.Gui.CategoryOrder("3. Previous Day High/Low/Open", 3)]
-[NinjaTrader.Gui.CategoryOrder("4. Previous Day Value & 80% Rule", 4)]
-[NinjaTrader.Gui.CategoryOrder("5. Overnight High/Low", 5)]
-[NinjaTrader.Gui.CategoryOrder("6. Initial Balance", 6)]
-[NinjaTrader.Gui.CategoryOrder("7. RTH VWAP", 7)]
-[NinjaTrader.Gui.CategoryOrder("8. Daily & Weekly Open", 8)]
-[NinjaTrader.Gui.CategoryOrder("9. Previous Week", 9)]
-[NinjaTrader.Gui.CategoryOrder("10. Previous Month", 10)]
-[NinjaTrader.Gui.CategoryOrder("11. Volume Profile", 11)]
-[NinjaTrader.Gui.CategoryOrder("12. Volume Profile Walls", 12)]
-[NinjaTrader.Gui.CategoryOrder("13. TPO & Single Prints", 13)]
-[NinjaTrader.Gui.CategoryOrder("14. Naked POCs", 14)]
-[NinjaTrader.Gui.CategoryOrder("15. Settlement & Inventory", 15)]
-[NinjaTrader.Gui.CategoryOrder("16. Late Spike", 16)]
-[NinjaTrader.Gui.CategoryOrder("17. Dashboard", 17)]
-[NinjaTrader.Gui.CategoryOrder("18. Alerts", 18)]
-[NinjaTrader.Gui.CategoryOrder("19. Discord Alerts (Optional)", 19)]
-[NinjaTrader.Gui.CategoryOrder("20. NinjaTrader Limits", 20)]
-[NinjaTrader.Gui.CategoryOrder("About", 21)]
-public partial class TatankaAmtToolkit {
 private void InitializeSettings() {
 tzguard_enable = true;
 row_scale = "Auto";
