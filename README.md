@@ -14,7 +14,7 @@ None of them give buy/sell signals or trade recommendations.
 | **TPO Profile** | TPO (Market Profile) letters for each 30-minute period, with the POC, value area and a heatmap gradient. Full letter detail for recent days, outlines for older ones. | `ninjatrader/TatankaTpoProfile.cs` |
 | **If/Then** | Shows the afternoon review's if/then bias for the zone price is in. Paste the review's block and it updates as price moves between zones. | `ninjatrader/TatankaIfThenBiasTable.cs` |
 | **1hr 21 EMA** | The 1-hour 21-period EMA on any chart timeframe, in live, confirmed or smoothed mode. | `ninjatrader/TatankaHtfEma.cs` |
-| **Level Lines** (NinjaTrader only) | A range box (top, bottom, optional midpoint and shading) plus any number of labeled lines you type in, one per line. | `ninjatrader/TatankaLevelLines.cs` |
+| **Level Lines** (NinjaTrader only) | A range box (top, bottom, optional midpoint and shading) plus any number of labeled lines in one large box, separated by commas, semicolons, or new lines. | `ninjatrader/TatankaLevelLines.cs` |
 
 Guides:
 
@@ -54,7 +54,7 @@ TradingView:
 - ETH trading hours, minute bars
 - 90 days loaded (400 days if you use the yearly profile)
 - Tick Replay off
-- **Tools → Options → Market Data:** merge policy *Merge back adjusted*
+- **Tools → Options → Market Data:** merge policy *Merge non back adjusted*, so levels sit at the prices that actually traded (the same as TradingView's default). The Toolkit follows your merge policy; *Merge back adjusted* shifts levels from before a contract roll onto the current contract.
 
 ## Updating
 
