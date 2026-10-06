@@ -129,6 +129,8 @@ The examples beneath the box are instructions, not prefilled levels.
 
 NinjaTrader 8 only. A volume profile for a custom session window, built from every trade (tick data) and drawn from each session's right edge toward the left: gray volume outside the value area, pink inside it, pink VAH and VAL lines and a lavender POC. It's modeled on TradingView's Session Volume Profile HD. On the chart it's labeled **Tatanka SVP**.
 
+<p align="center"><img src="images/ninjatrader-session-volume-profile.png" width="480" alt="Tatanka Session Volume Profile on a NinjaTrader ES 15-minute chart: each RTH session's profile drawn from its right edge, with POC, VAH and VAL"></p>
+
 **Chart setup:**
 
 - An intraday chart. 30 Minute with 5 days loaded is a good start; give the first tick download time to finish.
@@ -149,6 +151,8 @@ Up and down volume come from tick direction: a trade above the previous price is
 ## Periodic Volume Profile
 
 NinjaTrader 8 only. One volume profile per day, week, month or year (weekly by default), built from 1-minute data. The POC, VAH and VAL of each finished profile extend right until price touches them. It's modeled on TradingView's Periodic Volume Profile. On the chart it's labeled **Tatanka PVP**.
+
+<p align="center"><img src="images/ninjatrader-periodic-volume-profile.png" width="480" alt="Tatanka Periodic Volume Profile on a NinjaTrader ES 15-minute chart: this week's profile, with last week's VAH, VAL and POC extended until price touched them"></p>
 
 **Chart setup:** keep an intraday chart (30 or 60 Minute, say) whatever the period; a yearly profile doesn't need a yearly chart. Then load enough history in **Data Series → Days to load**:
 
@@ -173,6 +177,8 @@ Periods follow the trading date from the chart's Trading Hours template, so a Su
 ## Auto Anchored Volume Profile
 
 Version 1.1.0, NinjaTrader 8 only. One developing volume profile from a calendar anchor through the latest bar: the year to date by default. When the anchor rolls over, the profile starts fresh; old ones aren't kept. It's modeled on TradingView's Auto Anchored Volume Profile, with calendar anchors only (no highest-high, lowest-low, highest-volume, earnings, dividend or split anchors). On the chart it's labeled **Tatanka AAVP**.
+
+<p align="center"><img src="images/ninjatrader-auto-anchored-volume-profile.png" width="480" alt="Tatanka Auto Anchored Volume Profile on a NinjaTrader ES daily chart: the 2026 year-to-date profile, with POC, VAH and VAL"></p>
 
 **Chart setup:** an intraday chart or a **1 Day** chart (weekly, monthly and multi-day bars aren't supported). Either way the profile is built from 1-minute data, so load minute history from before the anchor's start: about 400 days covers the year to date if your data feed has it. A daily chart can show years of candles while the feed returns far less minute history, and the profile only uses the minutes it gets. Decade and Century anchors need more history than most feeds keep.
 
