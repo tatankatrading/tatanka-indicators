@@ -4,6 +4,7 @@ All notable changes to the Tatanka Trading free indicators. Versions match the T
 
 ## Updates to release v1.0.0
 
+- **October 6, 2026: new Session Volume Profile v1.0.0, Periodic Volume Profile v1.0.0 and Auto Anchored Volume Profile v1.1.0** (NinjaTrader 8 only). Session: a profile for a custom session window (08:30–15:00 by default) built from tick data. Periodic: daily, weekly, monthly or yearly profiles from 1-minute data, with POC, VAH and VAL extended until touched. Auto Anchored: one developing profile from a calendar anchor (year by default) on intraday or 1 Day charts. Downloads `TatankaSessionVolumeProfile_NT8.zip`, `TatankaPeriodicVolumeProfile_NT8.zip` and `TatankaAutoAnchoredVolumeProfile_NT8.zip`.
 - **October 4, 2026: new Level Lines v1.0.0** (NinjaTrader 8 only). A range box (top, bottom, optional midpoint and shading) plus any number of labeled custom lines, typed one per line as `price|label|color|style|width`. Download `TatankaLevelLines_NT8.zip`.
 - **October 3, 2026: TPO Profile (NinjaTrader).** POC ties now pick the tied row nearest the middle of the profile (the lower one if equally close), and price rows round the same way as TradingView.
 

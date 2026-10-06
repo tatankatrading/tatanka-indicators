@@ -2,7 +2,7 @@
 
 # Tatanka Trading Free Indicators
 
-Four free, open-source Auction Market Theory indicators for **NinjaTrader 8** and **TradingView**, from [Tatanka Trading](https://tatankatrading.com). They're the four tools behind every Tatanka session read. **Level Lines**, a NinjaTrader 8 tool for labeled range and custom lines, is here too.
+Four free, open-source Auction Market Theory indicators for **NinjaTrader 8** and **TradingView**, from [Tatanka Trading](https://tatankatrading.com). They're the four tools behind every Tatanka session read. **Level Lines**, a NinjaTrader 8 tool for labeled range and custom lines, is here too, along with three NinjaTrader 8 volume profiles: **Session**, **Periodic** and **Auto Anchored**.
 
 None of them give buy/sell signals or trade recommendations.
 
@@ -15,13 +15,16 @@ None of them give buy/sell signals or trade recommendations.
 | **If/Then** | Shows the afternoon review's if/then bias for the zone price is in. Paste the review's block and it updates as price moves between zones. | `ninjatrader/TatankaIfThenBiasTable.cs` |
 | **1hr 21 EMA** | The 1-hour 21-period EMA on any chart timeframe, in live, confirmed or smoothed mode. | `ninjatrader/TatankaHtfEma.cs` |
 | **Level Lines** (NinjaTrader only) | A range box (top, bottom, optional midpoint and shading) plus any number of labeled lines in one large box, separated by commas, semicolons, or new lines. | `ninjatrader/TatankaLevelLines.cs` |
+| **Session Volume Profile** (NinjaTrader only) | A volume profile for a custom session window (08:30–15:00 by default) built from tick data, with POC, value area and up/down volume, drawn from each session's right edge. | `ninjatrader/TatankaSessionVolumeProfile.cs` |
+| **Periodic Volume Profile** (NinjaTrader only) | Daily, weekly, monthly or yearly volume profiles from 1-minute data. Each finished profile's POC, VAH and VAL extend right until price touches them. | `ninjatrader/TatankaPeriodicVolumeProfile.cs` |
+| **Auto Anchored Volume Profile** (NinjaTrader only) | One developing volume profile from a calendar anchor (session, week, month, quarter, year, decade or century) to the latest bar, on intraday or 1 Day charts. | `ninjatrader/TatankaAutoAnchoredVolumeProfile.cs` |
 
 Guides:
 
 - [Tatanka AMT Toolkit User Guide (PDF)](docs/Tatanka-AMT-Toolkit-User-Guide.pdf): everything the Toolkit draws, how each piece is calculated and every setting
 - [AMT Toolkit on NinjaTrader](docs/NinjaTrader-Guide.md)
 - [AMT Toolkit on TradingView](docs/TradingView-Guide.md)
-- [TPO Profile, If/Then, 1hr 21 EMA and Level Lines](docs/Other-Indicators-Guide.md)
+- [TPO Profile, If/Then, 1hr 21 EMA, Level Lines and the volume profiles](docs/Other-Indicators-Guide.md)
 
 Screenshots and the full feature list: [tatankatrading.com/indicators](https://tatankatrading.com/indicators/)
 
@@ -34,6 +37,9 @@ NinjaTrader 8 (always the latest release):
 - [TatankaIfThen_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaIfThen_NT8.zip)
 - [Tatanka21EMA_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/Tatanka21EMA_NT8.zip)
 - [TatankaLevelLines_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaLevelLines_NT8.zip)
+- [TatankaSessionVolumeProfile_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaSessionVolumeProfile_NT8.zip)
+- [TatankaPeriodicVolumeProfile_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaPeriodicVolumeProfile_NT8.zip)
+- [TatankaAutoAnchoredVolumeProfile_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaAutoAnchoredVolumeProfile_NT8.zip)
 - [TatankaAll_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaAll_NT8.zip) (Toolkit, TPO, If/Then and 21 EMA)
 
 TradingView:
