@@ -1,22 +1,23 @@
 <p align="center"><img src="../assets/logo.png" width="72" alt="Tatanka Trading logo"></p>
 
-# TPO Profile, If/Then, 1hr 21 EMA, Level Lines and Volume Profiles: Guide
+# TPO Profile, If/Then, 1hr 21 EMA, Gap Analysis, Level Lines and Volume Profiles: Guide
 
 Version 1.0.0 · [Tatanka Trading](https://tatankatrading.com) · Free and open source (MPL 2.0)
 
-Free indicators that sit beside the [Tatanka AMT Toolkit](NinjaTrader-Guide.md). TPO Profile, If/Then and 1hr 21 EMA are on NinjaTrader 8 and TradingView; Level Lines and the three volume profiles are NinjaTrader 8 only.
+Free indicators that sit beside the [Tatanka AMT Toolkit](NinjaTrader-Guide.md). TPO Profile, If/Then, 1hr 21 EMA and Gap Analysis are on NinjaTrader 8 and TradingView; Level Lines and the three volume profiles are NinjaTrader 8 only.
 
 | Indicator | TradingView script | NinjaTrader download | NinjaTrader name |
 | --- | --- | --- | --- |
 | TPO Profile | [TPO Profile](https://tatankatrading.com/tv/tpo) | [TatankaTPO_NT8.zip](https://tatankatrading.com/nt/tpo) | TPO Profile |
 | If/Then | [If/Then Bias Table](https://tatankatrading.com/tv/ifthen) | [TatankaIfThen_NT8.zip](https://tatankatrading.com/nt/ifthen) | If/Then Bias Table |
 | 1hr 21 EMA | [HTF EMA (1H 21 by default)](https://tatankatrading.com/tv/21ema) | [Tatanka21EMA_NT8.zip](https://tatankatrading.com/nt/21ema) | HTF EMA (1H 21 by default) |
+| [Gap Analysis](#gap-analysis) | [Gap Analysis](https://www.tradingview.com/script/ZrLxeLZK-Gap-Analysis/) | [TatankaGapAnalysis_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaGapAnalysis_NT8.zip) | Tatanka Gap Analysis |
 | Level Lines | NinjaTrader only | [TatankaLevelLines_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaLevelLines_NT8.zip) | Level Lines |
 | [Session Volume Profile](#session-volume-profile) | NinjaTrader only | [TatankaSessionVolumeProfile_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaSessionVolumeProfile_NT8.zip) | TatankaSessionVolumeProfile |
 | [Periodic Volume Profile](#periodic-volume-profile) | NinjaTrader only | [TatankaPeriodicVolumeProfile_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaPeriodicVolumeProfile_NT8.zip) | TatankaPeriodicVolumeProfile |
 | [Auto Anchored Volume Profile](#auto-anchored-volume-profile) | NinjaTrader only | [TatankaAutoAnchoredVolumeProfile_NT8.zip](https://github.com/TatankaTrading/tatanka-indicators/releases/latest/download/TatankaAutoAnchoredVolumeProfile_NT8.zip) | TatankaAutoAnchoredVolumeProfile |
 
-The AMT Toolkit, TPO Profile, If/Then and 1hr 21 EMA also come in one zip: [TatankaAll_NT8.zip](https://tatankatrading.com/nt/all). Level Lines and the volume profiles are separate downloads.
+The AMT Toolkit, TPO Profile, If/Then and 1hr 21 EMA also come in one zip: [TatankaAll_NT8.zip](https://tatankatrading.com/nt/all). Gap Analysis, Level Lines and the volume profiles are separate downloads.
 
 ## Install
 
@@ -67,6 +68,46 @@ The 21-period EMA from the 1-hour chart, drawn on any chart timeframe. Change **
 - **Live:** the developing 1-hour EMA, updating with each bar.
 - **Exact:** the last closed 1-hour EMA, stepping once an hour.
 - **Smooth:** an EMA on your chart's timeframe with a scaled length, so the line curves smoothly. It can drift slightly from the true 1-hour value. NinjaTrader's default.
+
+## Gap Analysis
+
+Finds the gap between one RTH session's close and the next RTH open, shades it, and tracks it until price fills it. The default session is 08:30–15:00 Chicago time. On NinjaTrader it's labeled **Tatanka Gap Analysis**.
+
+<p align="center"><img src="images/tradingview-gap-analysis.png" width="480" alt="Gap Analysis on a TradingView ES 10-minute chart: an unfilled gap up below price, two partly filled gaps down above it, and the gap table"></p>
+
+What it draws:
+
+- **Gap zone:** from the RTH open to the prior RTH close, green for a gap up and red for a gap down. As wicks reach into the zone it shrinks to the unfilled part, and the touched part turns gray. The deepest fill holds when price backs away. Unfilled zones extend right until they fill; filled gaps are hidden by default.
+- **Fill target line:** a dashed line at the prior RTH close. TradingView calls it the settle line.
+- **Label** at each gap's start: direction, size in points and percent filled.
+- **Table** for the latest gap: direction, gaps tracked, fill status, the fill target, bars since the gap (or bars it took to fill), and how many gaps in a row went the same direction. Three or more in a row shows **ELEVATED** on the EXHAUSTION row.
+- **Alerts** when a new gap opens and when a gap fills completely.
+
+**The fill target is the last RTH bar's close on your chart, not the exchange settlement price.** The first session loaded only supplies a close, so gaps start with the second.
+
+**Chart setup (NinjaTrader):**
+
+- A **Minute** or **Second** chart. 1 or 5 Minute lines up with 08:30 and 15:00; a bar that straddles either time can't show the exact open or close. Daily, Tick, Volume, Range and Renko charts show a message instead.
+- An **ETH** Trading Hours template so overnight trading counts toward fills. An RTH-only chart still finds gaps but can't see overnight fills.
+- Load as many days as you want gaps (**Data Series → Days to load**). Every loaded gap is tracked.
+
+**Settings worth knowing (NinjaTrader):**
+
+- **RTH start / RTH end (Chicago HHmmss):** `083000` and `150000` by default, in Chicago time whatever your chart's time zone, with daylight saving.
+- **Minimum gap size (points):** 0 shows every gap.
+- **Maximum visible gaps (0 = all):** 0 by default. A number shows only the newest gaps on screen; older gaps are still tracked.
+- **Extend unfilled gaps right:** on by default. Off ends each zone at the next gap.
+- **Shrink partially filled zones, Show partially filled area, Hide fully filled gaps:** all on by default.
+- **Alert sound file:** a file in NinjaTrader's sounds folder (`Alert1.wav` by default), a full path to a `.wav`, or blank for a visual alert only.
+
+**How fills are counted:**
+
+- A gap up fills when a bar's low reaches the prior close; a gap down fills when a bar's high reaches it. Overnight bars count when the chart has them, and a move straight through the target counts as a full fill.
+- Percent filled is the deepest wick into the zone. It never goes back down.
+- Alerts fire on live data only; loading history doesn't replay them. NinjaTrader calculates **On price change** by default, so a live fill shows before the bar closes.
+- Fill status reflects every bar loaded, so scrolling back doesn't rewind it. Use Playback to watch a gap fill.
+
+**Versus TradingView:** the same rules and defaults. NinjaTrader stamps bars at their close, so on a 1-minute chart the 08:31 bar is the first RTH bar and the 15:00 bar the last; it's the same session. TradingView can draw at most 500 boxes, so it shows the newest 500 gaps (250 when partial fills take two boxes each) and keeps tracking older ones. NinjaTrader has no drawing cap.
 
 ## Level Lines
 
@@ -216,6 +257,7 @@ On a 1 Day chart the profile spans the daily bars of its trading dates. A Sessio
 - **Nothing drawn:** check the **Log** tab in the Control Center, and that the chart has enough days loaded (the 1hr 21 EMA needs at least a few days of history).
 - **Volume profile shows "waiting for 1-minute history" or "no ticks in the custom session":** the history hasn't arrived yet, or the chart's Trading Hours or the session time zone leaves it out. Let the download finish, raise Days to load, and check Trading Hours.
 - **"First loaded period may be incomplete" or "load history from before…" at the bottom of the chart:** the loaded history starts after the period or anchor began. Raise Days to load; volume your feed doesn't return can't be rebuilt. **Incomplete history notice** turns the message off.
+- **Gap Analysis says "Use a Minute or Second chart":** switch the chart to Minute or Second bars. **"Waiting for a qualifying RTH gap"** in its table means fewer than two RTH sessions are loaded, or no gap met the minimum size.
 
 ## License
 
