@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Tatanka Trading LLC.
 // This Source Code Form is subject to the Mozilla Public License, v. 2.0.
 // If a copy of the MPL was not distributed with this file, obtain one at https://mozilla.org/MPL/2.0/.
-// Tatanka Level Lines v1.0.0 for NinjaTrader 8 - tatankatrading.com
+// Tatanka Level Lines v1.1.0 for NinjaTrader 8 - tatankatrading.com
 
 #region Using declarations
 using System;
@@ -36,9 +36,19 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //      Styles: Solid, Dash, Dot, DashDot, DashDotDot.
 // Labels sit on the right edge above each line, with the price appended, and stack
 // instead of overlapping when two lines are close.
+//   3. Optional sharing: one chart set to Source, others set to Follow draw its lines.
+//      Charts share within one contract month; a micro shares with its full-size
+//      contract (MES with ES, MNQ with NQ, ...).
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
+	public enum TatankaLevelLinesSharingMode
+	{
+		Off,
+		Source,
+		Follow
+	}
+
 	public class TatankaLevelLines : Indicator
 	{
 		private class LevelLine
@@ -57,12 +67,173 @@ namespace NinjaTrader.NinjaScript.Indicators
 		}
 
 		private readonly List<LevelLine> customLines = new List<LevelLine>();
+		private SharedLevels localLevels;
+		private SharedLevels renderedLevels;
+		private List<LevelLine> renderedLines;
+		private Brush renderedFillBrush;
+		private string sharedInstrument;
+		private string sharedDisplay;
+		private TatankaLevelLinesSharingMode activeSharingMode;
+		private volatile bool sharingActive;
+		// Identifies this instance's publish, so it can withdraw only its own levels.
+		private readonly object sourceToken = new object();
+
+		// Only values and serialized brushes cross chart threads. Every chart owns
+		// its own Stroke objects and DirectX resources; those must never be shared.
+		private sealed class SharedLine
+		{
+			public readonly double Price;
+			public readonly string Label;
+			public readonly string Brush;
+			public readonly DashStyleHelper Dash;
+			public readonly float Width;
+			public readonly int Opacity;
+
+			public SharedLine(LevelLine line)
+			{
+				Price = line.Price;
+				Label = line.Label;
+				Brush = Serialize.BrushToString(line.Stroke.Brush);
+				Dash = line.Stroke.DashStyleHelper;
+				Width = line.Stroke.Width;
+				Opacity = line.Stroke.Opacity;
+			}
+		}
+
+		private sealed class SharedLevels
+		{
+			public readonly SharedLine[] Lines;
+			public readonly double RangeTop;
+			public readonly double RangeBottom;
+			public readonly bool FillRange;
+			public readonly string FillBrush;
+			public readonly int FillOpacity;
+
+			public SharedLevels(SharedLine[] lines, double top, double bottom, bool fill, string brush, int opacity)
+			{
+				Lines = lines;
+				RangeTop = top;
+				RangeBottom = bottom;
+				FillRange = fill;
+				FillBrush = brush;
+				FillOpacity = opacity;
+			}
+		}
+
+		private static class SharedLevelStore
+		{
+			private static readonly object gate = new object();
+			private static readonly Dictionary<string, List<Action>> listeners = new Dictionary<string, List<Action>>(StringComparer.Ordinal);
+
+			// Every live Source's levels per instrument, oldest first. Follow charts show the
+			// newest. When a Source goes away, the next newest takes over, or Follow charts
+			// go back to waiting when none is left.
+			private sealed class Publication
+			{
+				public readonly object Owner;
+				public readonly SharedLevels Levels;
+
+				public Publication(object owner, SharedLevels levels)
+				{
+					Owner = owner;
+					Levels = levels;
+				}
+			}
+			private static readonly Dictionary<string, List<Publication>> sources = new Dictionary<string, List<Publication>>(StringComparer.Ordinal);
+
+			public static SharedLevels Get(string instrument)
+			{
+				lock (gate)
+				{
+					List<Publication> list;
+					return instrument != null && sources.TryGetValue(instrument, out list) && list.Count > 0
+						? list[list.Count - 1].Levels : null;
+				}
+			}
+
+			public static void Publish(string instrument, SharedLevels value, object owner)
+			{
+				Action[] notify;
+				lock (gate)
+				{
+					List<Publication> list;
+					if (!sources.TryGetValue(instrument, out list))
+						sources[instrument] = list = new List<Publication>();
+					list.RemoveAll(p => ReferenceEquals(p.Owner, owner));
+					list.Add(new Publication(owner, value));
+					notify = ListenersFor(instrument);
+				}
+				// Do not invoke chart callbacks while holding the store lock.
+				foreach (Action callback in notify)
+					callback();
+			}
+
+			// Removes only this Source's levels. On Apply, NinjaTrader may terminate the old
+			// instance before or after the new one publishes; either order leaves the new
+			// levels showing.
+			public static void Withdraw(string instrument, object owner)
+			{
+				Action[] notify;
+				lock (gate)
+				{
+					List<Publication> list;
+					if (instrument == null || !sources.TryGetValue(instrument, out list))
+						return;
+					int index = list.FindIndex(p => ReferenceEquals(p.Owner, owner));
+					if (index < 0)
+						return;
+					bool wasShowing = index == list.Count - 1;
+					list.RemoveAt(index);
+					if (list.Count == 0)
+						sources.Remove(instrument);
+					if (!wasShowing)
+						return;
+					notify = ListenersFor(instrument);
+				}
+				foreach (Action callback in notify)
+					callback();
+			}
+
+			// Call while holding gate.
+			private static Action[] ListenersFor(string instrument)
+			{
+				List<Action> callbacks;
+				return listeners.TryGetValue(instrument, out callbacks) ? callbacks.ToArray() : new Action[0];
+			}
+
+			public static void Subscribe(string instrument, Action callback)
+			{
+				lock (gate)
+				{
+					List<Action> callbacks;
+					if (!listeners.TryGetValue(instrument, out callbacks))
+						listeners[instrument] = callbacks = new List<Action>();
+					if (!callbacks.Contains(callback))
+						callbacks.Add(callback);
+				}
+			}
+
+			public static void Unsubscribe(string instrument, Action callback)
+			{
+				lock (gate)
+				{
+					List<Action> callbacks;
+					if (instrument == null || !listeners.TryGetValue(instrument, out callbacks))
+						return;
+					callbacks.Remove(callback);
+					if (callbacks.Count == 0)
+						listeners.Remove(instrument);
+				}
+				// The store holds values only, never chart objects. Each Source withdraws its
+				// own levels when it terminates; a recompile resets the store.
+			}
+		}
 
 		protected override void OnStateChange()
 		{
 			if (State == State.SetDefaults)
 			{
-				Description					= "Labeled horizontal levels: a range box (top, bottom, midpoint) plus any number of custom lines.";
+				Description					= "Labeled horizontal levels: a range box (top, bottom, midpoint) plus any number of custom lines, with optional Source/Follow sharing between charts of the same contract (micro and full-size included).";
 				Name						= "Level Lines";
 				Calculate					= Calculate.OnBarClose;
 				IsOverlay					= true;
@@ -72,6 +243,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 				PaintPriceMarkers			= false;
 				IsSuspendedWhileInactive	= true;
 				ScaleJustification			= ScaleJustification.Right;
+				SharingMode			= TatankaLevelLinesSharingMode.Off;
 
 				RangeTop			= 0;
 				RangeBottom			= 0;
@@ -97,6 +269,32 @@ namespace NinjaTrader.NinjaScript.Indicators
 			else if (State == State.DataLoaded)
 			{
 				BuildCustomLines();
+				localLevels = CaptureLocalLevels();
+				activeSharingMode = SharingMode;
+			}
+			else if (State == State.Historical)
+			{
+				// ChartControl is not guaranteed to exist before State.Historical.
+				// Ignore settings-preview instances and non-chart hosts.
+				if (ChartControl != null && Instrument != null && activeSharingMode != TatankaLevelLinesSharingMode.Off)
+				{
+					sharedInstrument = ShareKey(Instrument, out sharedDisplay);
+					sharingActive = true;
+					if (activeSharingMode == TatankaLevelLinesSharingMode.Source)
+						SharedLevelStore.Publish(sharedInstrument, localLevels, sourceToken);
+					else
+						SharedLevelStore.Subscribe(sharedInstrument, RefreshSharedLevels);
+				}
+			}
+			else if (State == State.Terminated)
+			{
+				sharingActive = false;
+				// Removing the Source, closing its chart, switching it to Off/Follow or to
+				// another instrument sends its Follow charts back to "waiting for Source"
+				// instead of leaving stale lines on them.
+				if (activeSharingMode == TatankaLevelLinesSharingMode.Source)
+					SharedLevelStore.Withdraw(sharedInstrument, sourceToken);
+				SharedLevelStore.Unsubscribe(sharedInstrument, RefreshSharedLevels);
 			}
 		}
 
@@ -104,6 +302,124 @@ namespace NinjaTrader.NinjaScript.Indicators
 		{
 			// Nothing to calculate per bar; all drawing happens in OnRender.
 		}
+
+		#region Sharing
+		// Full-size and micro roots quoted in the same price units, so one set of levels
+		// fits both. Each pair shares under the full-size root.
+		private static readonly string[][] MicroPairs =
+		{
+			new[] { "ES",  "MES" },
+			new[] { "NQ",  "MNQ" },
+			new[] { "YM",  "MYM" },
+			new[] { "RTY", "M2K" },
+			new[] { "CL",  "MCL" },
+			new[] { "GC",  "MGC" },
+			new[] { "SI",  "SIL" },
+			new[] { "HG",  "MHG" }
+		};
+
+		// Sharing key: the contract's full name with a micro root swapped for its
+		// full-size root, so MES 12-26 and ES 12-26 share, ES 12-26 and ES 03-27 don't.
+		// display is what the waiting message shows, e.g. "ES/MES 12-26".
+		private static string ShareKey(Instrument instrument, out string display)
+		{
+			string full = instrument.FullName ?? string.Empty;
+			string root = instrument.MasterInstrument != null ? instrument.MasterInstrument.Name : null;
+			if (!string.IsNullOrEmpty(root) && full.StartsWith(root, StringComparison.Ordinal))
+			{
+				string month = full.Substring(root.Length);
+				foreach (string[] pair in MicroPairs)
+				{
+					if (string.Equals(root, pair[0], StringComparison.OrdinalIgnoreCase)
+						|| string.Equals(root, pair[1], StringComparison.OrdinalIgnoreCase))
+					{
+						display = pair[0] + "/" + pair[1] + month;
+						return pair[0] + month;
+					}
+				}
+			}
+			display = full;
+			return full;
+		}
+
+		private SharedLevels CaptureLocalLevels()
+		{
+			List<LevelLine> lines = new List<LevelLine>();
+			if (RangeTop > 0)
+				lines.Add(new LevelLine { Price = RangeTop, Label = RangeTopLabel, Stroke = RangeStroke });
+			if (RangeBottom > 0)
+				lines.Add(new LevelLine { Price = RangeBottom, Label = RangeBottomLabel, Stroke = RangeStroke });
+			if (ShowRangeMid && RangeTop > 0 && RangeBottom > 0)
+				lines.Add(new LevelLine { Price = (RangeTop + RangeBottom) / 2.0, Label = RangeMidLabel, Stroke = RangeMidStroke });
+			lines.AddRange(customLines);
+			return new SharedLevels(lines.Where(line => line.Stroke != null).Select(line => new SharedLine(line)).ToArray(),
+				RangeTop, RangeBottom, FillRange,
+				RangeFillBrush == null ? null : Serialize.BrushToString(RangeFillBrush), RangeFillOpacity);
+		}
+
+		private void RefreshSharedLevels()
+		{
+			ChartControl chart = ChartControl;
+			if (!sharingActive || chart == null || chart.Dispatcher.HasShutdownStarted || chart.Dispatcher.HasShutdownFinished)
+				return;
+			// A source can be on another chart's UI thread. Queue refresh on this
+			// chart without waiting for a bar or blocking the source dispatcher.
+			chart.Dispatcher.InvokeAsync(new Action(delegate
+			{
+				if (sharingActive)
+					ForceRefresh();
+			}));
+		}
+
+		private static Brush RestoreBrush(string value)
+		{
+			if (value == null)
+				return null;
+			Brush brush = Serialize.StringToBrush(value);
+			if (brush != null && brush.CanFreeze && !brush.IsFrozen)
+				brush.Freeze();
+			return brush;
+		}
+
+		private void PrepareRenderLevels(SharedLevels levels)
+		{
+			if (ReferenceEquals(renderedLevels, levels))
+				return;
+			ReleaseRenderResources();
+			renderedLines = new List<LevelLine>();
+			foreach (SharedLine line in levels.Lines)
+			{
+				Stroke stroke = new Stroke(RestoreBrush(line.Brush), line.Dash, line.Width);
+				stroke.Opacity = line.Opacity;
+				renderedLines.Add(new LevelLine { Price = line.Price, Label = line.Label, Stroke = stroke });
+			}
+			renderedFillBrush = RestoreBrush(levels.FillBrush);
+			renderedLevels = levels;
+		}
+
+		private void ReleaseRenderResources()
+		{
+			if (renderedLines != null)
+				foreach (LevelLine line in renderedLines)
+					line.Stroke.RenderTarget = null;
+		}
+
+		public override void OnRenderTargetChanged()
+		{
+			ReleaseRenderResources();
+			base.OnRenderTargetChanged();
+		}
+
+		private void DrawWaitingForSource()
+		{
+			using (SharpDX.DirectWrite.TextFormat format = new SimpleFont("Arial", 12).ToDirectWriteTextFormat())
+			using (SharpDX.Direct2D1.Brush brush = Brushes.Gray.ToDxBrush(RenderTarget))
+			{
+				RenderTarget.DrawText("Level Lines: waiting for Source on " + sharedDisplay, format,
+					new SharpDX.RectangleF(ChartPanel.X + 8, ChartPanel.Y + 24, Math.Max(10, ChartPanel.W - 16), 48), brush);
+			}
+		}
+		#endregion
 
 		#region Parsing
 		private void BuildCustomLines()
@@ -178,39 +494,39 @@ namespace NinjaTrader.NinjaScript.Indicators
 			if (RenderTarget == null || ChartPanel == null)
 				return;
 
+			SharedLevels levels = activeSharingMode == TatankaLevelLinesSharingMode.Follow
+				? SharedLevelStore.Get(sharedInstrument) : localLevels;
+			if (levels == null)
+			{
+				if (sharingActive && activeSharingMode == TatankaLevelLinesSharingMode.Follow)
+					DrawWaitingForSource();
+				return;
+			}
+			PrepareRenderLevels(levels);
+
 			float x0		= ChartPanel.X;
 			float x1		= ChartPanel.X + ChartPanel.W;
-			bool hasTop		= RangeTop > 0;
-			bool hasBottom	= RangeBottom > 0;
+			bool hasTop		= levels.RangeTop > 0;
+			bool hasBottom	= levels.RangeBottom > 0;
 
 			SharpDX.Direct2D1.AntialiasMode oldMode = RenderTarget.AntialiasMode;
 			RenderTarget.AntialiasMode = SharpDX.Direct2D1.AntialiasMode.Aliased;
 
 			// Range shading
-			if (FillRange && hasTop && hasBottom && RangeFillBrush != null)
+			if (levels.FillRange && hasTop && hasBottom && renderedFillBrush != null)
 			{
-				float yHi = chartScale.GetYByValue(Math.Max(RangeTop, RangeBottom));
-				float yLo = chartScale.GetYByValue(Math.Min(RangeTop, RangeBottom));
-				using (SharpDX.Direct2D1.Brush fill = RangeFillBrush.ToDxBrush(RenderTarget))
+				float yHi = chartScale.GetYByValue(Math.Max(levels.RangeTop, levels.RangeBottom));
+				float yLo = chartScale.GetYByValue(Math.Min(levels.RangeTop, levels.RangeBottom));
+				using (SharpDX.Direct2D1.Brush fill = renderedFillBrush.ToDxBrush(RenderTarget))
 				{
-					fill.Opacity = Math.Max(0, Math.Min(100, RangeFillOpacity)) / 100f;
+					fill.Opacity = Math.Max(0, Math.Min(100, levels.FillOpacity)) / 100f;
 					RenderTarget.FillRectangle(new SharpDX.RectangleF(x0, yHi, x1 - x0, yLo - yHi), fill);
 				}
 			}
 
-			// Collect every line: range lines first, then the custom list
-			List<LevelLine> items = new List<LevelLine>();
-			if (hasTop)
-				items.Add(new LevelLine { Price = RangeTop, Label = RangeTopLabel, Stroke = RangeStroke });
-			if (hasBottom)
-				items.Add(new LevelLine { Price = RangeBottom, Label = RangeBottomLabel, Stroke = RangeStroke });
-			if (ShowRangeMid && hasTop && hasBottom)
-				items.Add(new LevelLine { Price = (RangeTop + RangeBottom) / 2.0, Label = RangeMidLabel, Stroke = RangeMidStroke });
-			items.AddRange(customLines);
-
 			// Draw the lines, queue the labels
 			List<PendingLabel> labels = new List<PendingLabel>();
-			foreach (LevelLine item in items)
+			foreach (LevelLine item in renderedLines)
 			{
 				if (item.Stroke == null || item.Price < chartScale.MinValue || item.Price > chartScale.MaxValue)
 					continue;
@@ -285,6 +601,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 		#endregion
 
 		#region Properties
+		[Display(Name = "Sharing mode", Description = "Off: use this chart's settings. Source: publish levels, labels, line styles and range shading for this contract month. Follow: display the Source's levels. Add this indicator to every participating chart. A micro shares with its full-size contract (ES/MES, NQ/MNQ, YM/MYM, RTY/M2K, CL/MCL, GC/MGC, SI/SIL, HG/MHG), same month only. Use one Source per contract; if several are running, the newest wins. Label display settings remain local to each chart.", Order = 1, GroupName = "0. Sharing")]
+		public TatankaLevelLinesSharingMode SharingMode { get; set; }
+
 		[Display(Name = "Range top (0 = off)", Order = 1, GroupName = "1. Range")]
 		public double RangeTop { get; set; }
 

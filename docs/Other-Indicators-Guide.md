@@ -166,6 +166,19 @@ The examples beneath the box are instructions, not prefilled levels.
 
 **3. Labels:** font, price in the label, right or left edge, above or below the line, and a dark background box.
 
+**4. Sharing between charts:** type your levels once and show them on every chart of the same contract.
+
+1. On the chart where you type your levels, set **Sharing mode** to **Source** and enter the range and levels as usual.
+2. Add Level Lines to each other chart of that contract and set **Sharing mode** to **Follow**. Follow charts draw the Source's lines, not their own.
+3. To change the lines, edit the Source and click **Apply** or **OK**. Follow charts update right away.
+
+- **Shared:** prices, labels, colors, line styles and widths, the range, its midpoint and shading. **Per chart:** label font, price in label, right or left edge, above or below the line, and label background.
+- **Same contract month, micros included.** ES 12-26 and MES 12-26 share on any timeframe or bar type; ES 03-27 and ES ##-## don't. Pairs: ES/MES, NQ/MNQ, YM/MYM, RTY/M2K, CL/MCL, GC/MGC, SI/SIL, HG/MHG. When you roll, move the Source and its Follow charts to the new month together.
+- **One Source per contract.** With two, Follow charts show the newest and fall back to the other if it goes away. Don't save Source as your Default template, or every new chart becomes a Source.
+- A Follow chart ignores its own range and levels settings. For extra lines on one chart only, add a second Level Lines with Sharing mode **Off**.
+- A Follow chart with no Source shows *Level Lines: waiting for Source on ES/MES 12-26*. Removing the Source or closing its chart sends its Follow charts back to waiting, or to another Source on that contract if one is running.
+- Sharing works inside one NinjaTrader on one PC. Nothing goes over the internet.
+
 ## Session Volume Profile
 
 NinjaTrader 8 only. A volume profile for a custom session window, built from every trade (tick data) and drawn from each session's right edge toward the left: gray volume outside the value area, pink inside it, pink VAH and VAL lines and a lavender POC. It's modeled on TradingView's Session Volume Profile HD. On the chart it's labeled **Tatanka SVP**.
