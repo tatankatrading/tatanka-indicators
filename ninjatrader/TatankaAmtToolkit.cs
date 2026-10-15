@@ -37,7 +37,7 @@ namespace TatankaTrading.AmtToolkit
     {
         public const string Name = "Tatanka AMT Toolkit";
         public const string Short = "Tatanka AMT";
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
         public const string Website = "tatankatrading.com";
     }
 
@@ -1238,7 +1238,7 @@ namespace TatankaTrading.AmtToolkit
     }
 
     // No parse/read error escapes into the indicator's fatal error handler.
-    // Each resolved instrument/path has a separate last-good cache.
+    // Each resolved instrument/path (or link) has a separate last-good cache.
     public sealed class LevelFileSource
     {
         public LevelsDocument Current = new LevelsDocument();
@@ -1246,11 +1246,14 @@ namespace TatankaTrading.AmtToolkit
         public int Revision { get; private set; }
         // Chart price used to catch another symbol's levels; NaN skips the check.
         public double ReferencePrice = double.NaN;
-        private string cachePath = "", signature = "", root = "";
+        private string cachePath = "", signature = "", root = "", linkError = "";
         private TimeZoneInfo central;
+        private LevelLink link;
+        private int linkVersion;
         public static string ResolvePath(string template, string root)
         {
             if (!Regex.IsMatch(root ?? "", @"^[A-Za-z0-9_-]+$")) throw new ArgumentException("Unsupported instrument root in levels path.");
+            if (LevelLink.IsLink(template)) return LevelLink.Resolve(template, root);
             string value = Environment.ExpandEnvironmentVariables((template ?? "").Trim().Trim('"'));
             value = Regex.Replace(value, @"\{root\}", delegate(Match m) { return root; }, RegexOptions.IgnoreCase);
             if (!Path.IsPathRooted(value)) throw new ArgumentException("Use a full path for the levels file.");
@@ -1277,9 +1280,12 @@ namespace TatankaTrading.AmtToolkit
                     try { Accept(LevelsDocument.Parse(ReadLimited(cachePath), false)); }
                     catch (Exception ex) { CacheWarning = "Last-good cache not used: " + ex.Message; }
                 }
+                // Ask the link now. A chart with no levels at all (first setup, e.g. on a weekend) waits up to 3 s for
+                // them; otherwise the answer is applied on a later tick, so loading never waits on the network.
+                if (LevelLink.IsLink(template)) { link = LevelLink.For(ResolvedPath, central); link.Load(Current.Levels.Count == 0 ? 3000 : 0); }
                 Refresh();
             }
-            catch (Exception ex) { Error = "Levels file unavailable; " + Retained() + " " + ex.Message; }
+            catch (Exception ex) { Error = (LevelLink.IsLink(template) ? "Levels link" : "Levels file") + " unavailable; " + Retained() + " " + ex.Message; }
         }
         private string Retained() { return Current.Levels.Count > 0 ? "last valid levels retained." : "structure features remain active without daily levels."; }
         private static string ReadLimited(string path)
@@ -1320,6 +1326,7 @@ namespace TatankaTrading.AmtToolkit
         public bool Refresh()
         {
             if (ResolvedPath.Length == 0) return false;
+            if (link != null) return RefreshLink();
             int before = Revision;
             try
             {
@@ -1331,6 +1338,27 @@ namespace TatankaTrading.AmtToolkit
                 if (before != Revision || !File.Exists(cachePath)) SaveCache();
             }
             catch (Exception ex) { Error = "Levels file rejected; " + Retained() + " " + ex.Message; }
+            return Revision != before;
+        }
+        // The download runs elsewhere (LevelLink); this parses each new file once and keeps the last valid levels.
+        private bool RefreshLink()
+        {
+            int before = Revision; string text, problem;
+            link.Poll();
+            int version = link.Read(out text, out problem);
+            if (version != linkVersion)
+            {
+                linkVersion = version;
+                try
+                {
+                    var document = LevelsDocument.Parse(text, false);
+                    if (!document.Date.HasValue) document.Date = MathEx.TradingDate(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, central));
+                    Accept(document); linkError = "";
+                    if (before != Revision || !File.Exists(cachePath)) SaveCache();
+                }
+                catch (Exception ex) { linkError = "Levels link file rejected; " + Retained() + " " + ex.Message; }
+            }
+            Error = problem.Length != 0 ? problem + " " + Retained() : linkError;
             return Revision != before;
         }
         private void SaveCache()
@@ -1352,6 +1380,246 @@ namespace TatankaTrading.AmtToolkit
             string stale = Current.Date.HasValue && Current.Date.Value.Date < tradingDate.Date ?
                 "STALE LEVELS: levels date " + Current.Date.Value.ToString("yyyy-MM-dd") + "; chart trading date " + tradingDate.ToString("yyyy-MM-dd") + "." : "";
             return (stale + " " + Error + " " + CacheWarning).Trim();
+        }
+    }
+    // A levels link (https://.../l/<key>/{root}.txt from /connect in the Tatanka Discord). One download per
+    // link per NinjaTrader process, shared by every chart that reads it, always on a worker thread: the data
+    // thread only starts a request or reads the last answer. NextAsk sets the schedule.
+    public sealed class LevelLink
+    {
+        public sealed class Reply { public int Status; public string Body = "", ETag = "", Problem = ""; public bool FromService; }
+        public const int MaxChars = 1048576;
+        // The members site marks its own answers, so a 403/404 from a proxy or firewall isn't taken for "link off".
+        public const string ServiceHeader = "X-Tatanka-Levels";
+        private static readonly object feedsLock = new object();
+        private static readonly Dictionary<string, LevelLink> feeds = new Dictionary<string, LevelLink>(StringComparer.Ordinal);
+        // 24-hour clock only ("Published: 2026-10-15 16:45 CT"); a 12-hour time is ignored rather than misread.
+        private static readonly Regex PublishedLine = new Regex(@"^[ \t]*Published[ \t]*:[ \t]*(\d{4}-\d{2}-\d{2})[ T]+(\d{1,2}:\d{2})(?::\d{2})?(?![\d:]|[ \t]*[AaPp]\.?[Mm]\b)", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+        // inflectionpoint publishes at 8:15 CT (RTH) and 4:45 PM CT (Globex).
+        private static readonly TimeSpan[] publishTimes = { new TimeSpan(8, 15, 0), new TimeSpan(16, 45, 0) };
+        private static readonly char[] pasteJunk = { '"', '`', '<', '>', ' ', '\t', '\r', '\n' };
+        private readonly object sync = new object();
+        private readonly string url;
+        private readonly TimeZoneInfo central;
+        private readonly Func<string, string, Reply> transport;
+        private bool busy;
+        private string body = "", etag = "", problem = "";
+        private int version, failures, status;
+        // Waits run on Stopwatch time, so a clock correction can't stall or rush the asks.
+        private long nextTick = long.MinValue, askedTick = long.MinValue, startedTick;
+        private DateTime stampCt = DateTime.MinValue, changedCt = DateTime.MinValue;
+        private LevelLink(string url, TimeZoneInfo ct, Func<string, string, Reply> transport) { this.url = url; central = ct; this.transport = transport; }
+        public static LevelLink For(string url, TimeZoneInfo ct) { return For(url, ct, null); }
+        public static LevelLink For(string url, TimeZoneInfo ct, Func<string, string, Reply> testTransport)
+        {
+            lock (feedsLock)
+            {
+                LevelLink feed;
+                if (!feeds.TryGetValue(url, out feed)) { feed = new LevelLink(url, ct, testTransport ?? Get); feeds[url] = feed; }
+                return feed;
+            }
+        }
+        private static string Clean(string template) { return (template ?? "").Trim(pasteJunk); }
+        public static bool IsLink(string template)
+        {
+            string value = Clean(template);
+            return value.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("http://", StringComparison.OrdinalIgnoreCase);
+        }
+        // https only; plain http is accepted for this computer alone (testing).
+        public static string Resolve(string template, string root)
+        {
+            string value = Regex.Replace(Clean(template), @"\{root\}", delegate(Match m) { return root; }, RegexOptions.IgnoreCase);
+            Uri uri;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out uri) || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 ||
+                !(uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
+                throw new ArgumentException("Use the https levels link from /connect in the Tatanka Discord.");
+            return uri.AbsoluteUri;
+        }
+        private static long Now() { return System.Diagnostics.Stopwatch.GetTimestamp(); }
+        private static long Ticks(TimeSpan span) { return (long)(span.TotalSeconds * System.Diagnostics.Stopwatch.Frequency); }
+        // Data thread: starts a request when one is due and returns at once.
+        public void Poll()
+        {
+            lock (sync)
+            {
+                if (busy || Now() < nextTick) return;
+                Begin();
+            }
+        }
+        // Chart load: starts a request unless one was answered in the last minute. With waitMs > 0 (a chart
+        // with no levels yet, e.g. a first setup on a weekend) it waits for the answer, at most waitMs after
+        // the request began, however many charts wait on it. Otherwise the answer is applied on a later tick.
+        public void Load(int waitMs)
+        {
+            lock (sync)
+            {
+                if (!busy)
+                {
+                    if (askedTick != long.MinValue && Now() - askedTick < Ticks(TimeSpan.FromMinutes(1))) return;
+                    Begin();
+                }
+                long deadline = startedTick + Ticks(TimeSpan.FromMilliseconds(Math.Max(0, waitMs)));
+                while (busy)
+                {
+                    long left = deadline - Now();
+                    if (left <= 0) return;
+                    Monitor.Wait(sync, (int)Math.Min(int.MaxValue, Math.Max(1, left * 1000 / System.Diagnostics.Stopwatch.Frequency)));
+                }
+            }
+        }
+        // Latest answer: the version counts new files, so a chart parses each file once.
+        public int Read(out string text, out string error)
+        {
+            lock (sync) { text = body; error = problem; return version; }
+        }
+        // Call with sync held.
+        private void Begin()
+        {
+            busy = true; startedTick = Now();
+            try { ThreadPool.QueueUserWorkItem(delegate { Exchange(); }); }
+            catch (Exception) { busy = false; nextTick = Now() + Ticks(TimeSpan.FromMinutes(1)); Monitor.PulseAll(sync); }
+        }
+        // Runs on a worker thread. Nothing may escape: an exception there would end NinjaTrader.
+        private void Exchange()
+        {
+            Reply reply = null;
+            try
+            {
+                string known;
+                lock (sync) known = etag;
+                reply = transport(url, known);
+            }
+            catch (Exception ex) { reply = new Reply { Problem = ex.Message }; }
+            lock (sync)
+            {
+                try
+                {
+                    if (reply == null) reply = new Reply { Problem = "no reply" };
+                    DateTime nowCt = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, central);
+                    // A 403/404 without the service's mark came from something in between: retry like any failure.
+                    bool foreign = (reply.Status == 403 || reply.Status == 404) && !reply.FromService;
+                    status = foreign ? 502 : reply.Status;
+                    if (reply.Status == 200 || reply.Status == 304)
+                    {
+                        failures = 0; problem = "";
+                        if (reply.Status == 200)
+                        {
+                            etag = reply.ETag ?? "";
+                            string text = reply.Body ?? "";
+                            if (text != body || version == 0)
+                            {
+                                bool first = version == 0;
+                                if (!first) changedCt = nowCt;
+                                body = text; version++;
+                                DateTime published = Published(text);
+                                // No Published line: a file seen at chart load could be yesterday's, so it doesn't
+                                // count as this publish; one that changed while asking does.
+                                stampCt = published != DateTime.MinValue ? published : first ? DateTime.MinValue : nowCt;
+                            }
+                        }
+                    }
+                    else { failures++; problem = Describe(reply, foreign); }
+                    askedTick = Now();
+                    nextTick = askedTick + Ticks(NextAsk(nowCt, stampCt, changedCt, failures, status) - nowCt);
+                }
+                catch (Exception) { nextTick = Now() + Ticks(TimeSpan.FromMinutes(5)); }
+                finally { busy = false; Monitor.PulseAll(sync); }
+            }
+        }
+        private static string Describe(Reply reply, bool foreign)
+        {
+            if (reply.Status == 403 && !foreign) return "Levels link is not active. Run /connect in the Tatanka Discord to get your current link.";
+            if (reply.Status == 404 && !foreign) return "Nothing has been published for this symbol on the levels link yet.";
+            if (reply.Status == 0)
+            {
+                string detail = (reply.Problem ?? "").Trim();
+                if (detail.Length > 120) detail = detail.Substring(0, 120);
+                return "Levels link unreachable" + (detail.Length != 0 ? " (" + detail + ")" : "") + "; retrying.";
+            }
+            return "Levels link answered HTTP " + reply.Status + (foreign ? " (from a proxy or firewall?)" : "") + "; retrying.";
+        }
+        public static DateTime Published(string text)
+        {
+            Match m = PublishedLine.Match(text ?? "");
+            DateTime value;
+            return m.Success && DateTime.TryParseExact(m.Groups[1].Value + " " + m.Groups[2].Value, "yyyy-MM-dd H:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out value) ? value : DateTime.MinValue;
+        }
+        // When to ask next (Central time). Until the levels from the latest 8:15 / 4:45 PM publish are in hand:
+        // every 15 s for 10 minutes, then every minute for the rest of the hour. For 30 minutes after a new
+        // file: every 2 minutes (quick corrections). Otherwise every 30 minutes. Failures back off from 1 to
+        // 15 minutes (1 minute at most while a publish is due). A link that is not active, or a symbol that
+        // has nothing published, is asked every 30 minutes. Charts ask only while ticks arrive, so a closed
+        // market asks nothing.
+        // In hand: published at most 30 minutes before the publish time, or changed since its window opened.
+        public static DateTime NextAsk(DateTime nowCt, DateTime stampCt, DateTime changedCt, int failures, int status)
+        {
+            TimeSpan wait = TimeSpan.FromMinutes(30);
+            bool quiet = status == 403 || status == 404, due = false;
+            if (!quiet)
+                foreach (DateTime at in PublishesAround(nowCt))
+                    if (nowCt >= at.AddMinutes(-1) && nowCt < at.AddMinutes(60) && !InHand(at, stampCt, changedCt))
+                    {
+                        due = true;
+                        wait = Shorter(wait, nowCt < at.AddMinutes(10) ? TimeSpan.FromSeconds(15) : TimeSpan.FromMinutes(1));
+                    }
+            if (!quiet && failures > 0)
+            {
+                TimeSpan backoff = TimeSpan.FromMinutes(Math.Min(15, 1 << Math.Min(4, failures - 1)));
+                wait = due ? Shorter(backoff, TimeSpan.FromMinutes(1)) : backoff;
+            }
+            else if (!quiet && nowCt - changedCt < TimeSpan.FromMinutes(30)) wait = Shorter(wait, TimeSpan.FromMinutes(2));
+            DateTime next = nowCt + wait;
+            // Wake for the next publish instead of sleeping through it.
+            if (!quiet)
+                foreach (DateTime at in PublishesAround(nowCt))
+                    if (at.AddMinutes(-1) > nowCt && at.AddMinutes(-1) < next && !InHand(at, stampCt, changedCt)) next = at.AddMinutes(-1);
+            return next;
+        }
+        private static bool InHand(DateTime at, DateTime stampCt, DateTime changedCt)
+        {
+            return stampCt >= at.AddMinutes(-30) || changedCt >= at.AddMinutes(-1);
+        }
+        private static IEnumerable<DateTime> PublishesAround(DateTime nowCt)
+        {
+            for (int day = 0; day < 2; day++)
+                foreach (TimeSpan time in publishTimes) yield return nowCt.Date.AddDays(day) + time;
+        }
+        private static TimeSpan Shorter(TimeSpan a, TimeSpan b) { return a < b ? a : b; }
+        public static Reply Get(string url, string etag)
+        {
+            var request = (HttpWebRequest)WebRequest.Create(url);
+            request.Method = "GET"; request.UserAgent = "TatankaAMTToolkit/" + AmtBrand.Version;
+            request.Timeout = request.ReadWriteTimeout = 10000; request.AllowAutoRedirect = false;
+            request.CachePolicy = new System.Net.Cache.RequestCachePolicy(System.Net.Cache.RequestCacheLevel.BypassCache);
+            if (!string.IsNullOrEmpty(etag)) request.Headers[HttpRequestHeader.IfNoneMatch] = etag;
+            try
+            {
+                using (var response = (HttpWebResponse)request.GetResponse()) return ReadReply(response);
+            }
+            catch (WebException ex)
+            {
+                // .NET Framework reports 304 and every error status as an exception that carries the response.
+                using (var response = ex.Response as HttpWebResponse)
+                    return response != null ? new Reply { Status = (int)response.StatusCode, FromService = response.Headers[ServiceHeader] == "1" }
+                        : new Reply { Problem = ex.Status == WebExceptionStatus.Timeout ? "timed out" : ex.Message };
+            }
+        }
+        private static Reply ReadReply(HttpWebResponse response)
+        {
+            var reply = new Reply { Status = (int)response.StatusCode, ETag = response.Headers[HttpResponseHeader.ETag] ?? "", FromService = response.Headers[ServiceHeader] == "1" };
+            if (reply.Status != 200) return reply;
+            using (Stream stream = response.GetResponseStream())
+            using (var reader = new StreamReader(stream, Encoding.UTF8, true))
+            {
+                var text = new StringBuilder(); char[] data = new char[4096]; int count;
+                while ((count = reader.Read(data, 0, data.Length)) > 0)
+                {
+                    if (text.Length > MaxChars - count) throw new IOException("the levels link reply exceeds 1 MB");
+                    text.Append(data, 0, count);
+                }
+                reply.Body = text.ToString();
+            }
+            return reply;
         }
     }
 }
@@ -1935,7 +2203,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         [XmlIgnore, global::System.ComponentModel.ReadOnly(true)]
         [Display(Name = "Website", GroupName="About", Order=278)]
         public string AboutWebsite { get { return AmtBrand.Website; } set { } }
-        [Display(Name="Levels File (full path; supports {root})", Description = "Read daily prices from a local text file. Leave blank to use Paste levels here. {root} becomes the chart's root symbol; micros use the parent (MES reads ES, MNQ reads NQ, MCL reads CL, MGC reads GC). This does not connect to Discord.", GroupName="2. Daily Levels", Order=8)]
+        [Display(Name="Levels File or Link (supports {root})", Description = "Paste your levels link from /connect in the Tatanka Discord: each publish then loads by itself. Or enter the full path of a local levels file. Leave blank to use Paste levels here. {root} becomes the chart's root symbol; micros use the parent (MES reads ES, MNQ reads NQ, MCL reads CL, MGC reads GC). This never connects to Discord.", GroupName="2. Daily Levels", Order=8)]
         public string LevelsFile { get; set; }
         [Display(Name="Enable Alert Sound", GroupName="18. Alerts", Order=271)]
         public bool EnableSound { get; set; }

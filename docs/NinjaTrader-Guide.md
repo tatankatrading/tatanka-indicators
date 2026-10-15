@@ -2,7 +2,7 @@
 
 # Tatanka AMT Toolkit: NinjaTrader 8 Guide
 
-Version 1.0.0 · [Tatanka Trading](https://tatankatrading.com) · Free and open source (MPL 2.0)
+Version 1.1.0 · [Tatanka Trading](https://tatankatrading.com) · Free and open source (MPL 2.0)
 
 The Tatanka AMT Toolkit puts a complete Auction Market Theory read on one chart. This guide covers installing it, setting up the chart, loading levels, alerts and fixing common problems. For the TPO Profile, If/Then and 1hr 21 EMA, see the [other indicators guide](Other-Indicators-Guide.md).
 
@@ -26,7 +26,7 @@ The Tatanka AMT Toolkit puts a complete Auction Market Theory read on one chart.
 3. Pick the zip and confirm. NinjaTrader compiles it and says the import succeeded.
 4. Open a chart, right-click → **Indicators**, double-click **Tatanka AMT Toolkit**, then **OK**.
 
-The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily history in the background. Until that's done the chart shows *"Tatanka AMT v1.0.0 — loading chart and secondary history…"*.
+The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily history in the background. Until that's done the chart shows *"Tatanka AMT v1.1.0 — loading chart and secondary history…"*.
 
 ## 2. Set up the chart
 
@@ -95,15 +95,24 @@ Checks that protect you from pasting the wrong thing:
 - Levels are rejected if the pivot is more than 20% from the chart's price (usually another symbol's line) or a price is more than 20% from the pivot (usually a thousands separator, such as `7,745.25`).
 - A rejected paste draws no levels and the chart says why. A rejected levels file keeps the last good levels on the chart.
 
+### Levels link (Patreon members)
+
+Run `/connect` in the Tatanka Discord. The bot sends you a private link that ends in `/{root}.txt`. Paste it, exactly as is, into **2. Daily Levels → Levels File or Link** and click **OK**. From then on every publish (8:15 AM and 4:45 PM CT) loads by itself: nothing to paste, no file to manage.
+
+- `{root}` becomes the chart's symbol, so the same link works on ES, NQ, CL and GC charts, and micros read their parent (MES reads ES, MNQ reads NQ, MCL reads CL, MGC reads GC). Save the chart as a template and new charts have it too.
+- The Toolkit asks the link once per symbol however many charts show it: every 15 seconds from 8:14 and 4:44 until the new levels are in, every 2 minutes for half an hour after that (in case of a correction), and every 30 minutes otherwise. It asks nothing while the market is closed, and a chart opened on a weekend loads the latest levels straight away.
+- If the link can't be reached, the chart keeps the last good levels and says why. *Levels link is not active* means your membership lapsed or the link changed: run `/connect` again.
+- Keep the link to yourself; it's personal.
+
 ### Levels file (optional)
 
-Instead of pasting, point **Levels File** at a text file containing the same line. The Toolkit re-reads it every few seconds, so a file that's replaced each morning updates the chart without reloading. `{root}` in the path becomes the chart's symbol, so one template works everywhere, and micros read their parent (MES reads ES, MNQ reads NQ, MCL reads CL, MGC reads GC). Example:
+Instead of pasting, point **Levels File or Link** at a text file containing the same line. The Toolkit re-reads it every few seconds, so a file that's replaced each morning updates the chart without reloading. `{root}` in the path works the same way as in the link. Example:
 
 ```
 %USERPROFILE%\Documents\Tatanka\levels\{root}.txt
 ```
 
-Leave **Levels File** blank to use the paste box.
+Leave **Levels File or Link** blank to use the paste box.
 
 ### Daily ML levels
 
@@ -130,7 +139,7 @@ Only live alerts are sent; historical loading and Playback are skipped. If Disco
 | Group | What's in it |
 | --- | --- |
 | 1. Global Settings | Profile Row Scale, tick size, Force on Top, hide all labels, price-axis tags, session-time warning |
-| 2. Daily Levels | Levels file, paste box, lines, zones, labels, level alerts |
+| 2. Daily Levels | Levels link or file, paste box, lines, zones, labels, level alerts |
 | 3. Previous Day High/Low/Open | pdHigh, pdLow, pdOpen |
 | 4. Previous Day Value & 80% Rule | pdPOC, pdVAH, pdVAL, 80% Rule fill and alerts |
 | 5. Overnight High/Low | OVN session, removal time, alerts |
@@ -159,7 +168,7 @@ Every section follows the same order: on/off switches, lines, labels, then alert
 
 NinjaTrader has no auto-update. When a new version is posted:
 
-1. Compare the dashboard header (**Tatanka AMT v1.0.0**) with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
+1. Compare the dashboard header (**Tatanka AMT v1.1.0**) with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
 2. Download the new zip from the same link and import it the same way. Accept the overwrite.
 3. Reload the chart (F5). Your saved settings are kept.
 
@@ -170,7 +179,9 @@ NinjaTrader has no auto-update. When a new version is posted:
 | Import fails with compile errors | NinjaTrader compiles every script on your PC together, so a broken script elsewhere blocks the import. Open **New → NinjaScript Editor**; the error list names the file. Fix or remove that file, then import again. |
 | Red text on the chart, or nothing drawn | Check the **Log** tab in the Control Center for the Toolkit's message. Quote the version number when asking for help. |
 | "loading chart and secondary history…" never clears | Your data feed needs 1-minute and daily history for the symbol. Check the connection and Days to load. |
-| STALE LEVELS warning | The pasted date is older than the chart's trading date. Paste today's line. |
+| STALE LEVELS warning | The pasted date is older than the chart's trading date. Paste today's line. With a levels link, the next publish clears it. |
+| *Levels link is not active* | Run `/connect` in the Tatanka Discord and paste the link it sends. Your last levels stay on the chart meanwhile. |
+| *Levels link unreachable* | No internet, or a firewall blocks NinjaTrader. The chart keeps the last good levels and retries on its own. |
 | Levels rejected (20% message) | The line is for another symbol, or a price has a thousands separator. |
 | Chart is slow on NQ or another big-range symbol | Set **Profile Row Scale** higher (for example 10x), or use a shorter profile period. |
 | Older profiles or structures disappear | **20. NinjaTrader Limits** removes the oldest items first so the chart never crashes. Raise the limits if your PC can handle it. |
