@@ -69,7 +69,7 @@ TradingView:
 
 NinjaTrader has no auto-update.
 
-1. Compare the version in the Toolkit's dashboard header (**Tatanka AMT v1.0.0**), or the version line at the top of each `.cs` file, with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
+1. Compare the version in the Toolkit's dashboard header (**Tatanka AMT v1.1.0**), or the version line at the top of each `.cs` file, with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
 2. Download the new zip and import it the same way. Accept the overwrite.
 3. Reload the chart (F5).
 
@@ -83,7 +83,7 @@ YYYY-MM-DD, pivot, R1, R2, R3, R4, R5, S1, S2, S3, S4, S5
 
 Prices above the pivot are drawn as resistance and prices below it as support. Anyone can paste their own levels.
 
-The daily ML levels for ES, NQ, CL and GC come in exactly this format with the **$20/month Patreon**, along with the Globex levels and the afternoon review plans, whose if/then blocks paste into the If/Then indicator. Details at [tatankatrading.com](https://tatankatrading.com).
+The daily ML levels for ES, NQ, CL and GC come in exactly this format with the **$20/month Patreon**, along with the Globex levels and the afternoon review plans, whose if/then blocks paste into the If/Then indicator. On NinjaTrader, members can skip the paste: `/connect` in the Tatanka Discord gives a personal levels link that loads every publish by itself ([how](docs/NinjaTrader-Guide.md#levels-link-patreon-members)). Details at [tatankatrading.com](https://tatankatrading.com).
 
 ## Troubleshooting
 
