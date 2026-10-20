@@ -2,7 +2,7 @@
 
 # Tatanka Trading Free Indicators
 
-Four free, open-source Auction Market Theory indicators for **NinjaTrader 8** and **TradingView**, from [Tatanka Trading](https://tatankatrading.com). They're the four tools behind every Tatanka session read. **Gap Analysis**, on both platforms, tracks RTH opening gaps until they fill. **Level Lines**, a NinjaTrader 8 tool for labeled range and custom lines, is here too, along with three NinjaTrader 8 volume profiles: **Session**, **Periodic** and **Auto Anchored**.
+Free, open-source Auction Market Theory indicators for **NinjaTrader 8** and **TradingView**, from [Tatanka Trading](https://tatankatrading.com). They're the four tools behind every Tatanka session read. **Gap Analysis**, on both platforms, tracks RTH opening gaps until they fill. **Level Lines**, a NinjaTrader 8 tool for labeled range and custom lines, is here too, along with three NinjaTrader 8 volume profiles: **Session**, **Periodic** and **Auto Anchored**.
 
 None of them give buy/sell signals or trade recommendations.
 
