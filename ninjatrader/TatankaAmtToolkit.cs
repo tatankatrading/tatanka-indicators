@@ -37,7 +37,7 @@ namespace TatankaTrading.AmtToolkit
     {
         public const string Name = "Tatanka AMT Toolkit";
         public const string Short = "Tatanka AMT";
-        public const string Version = "1.1.0";
+        public const string Version = "1.2.0";
         public const string Website = "tatankatrading.com";
     }
 
@@ -438,6 +438,18 @@ namespace TatankaTrading.AmtToolkit
         public long PrunedRows;
         public Profile(double step, int limit) { if (step <= 0) throw new ArgumentException("Profile row size must be positive"); Step = step; Limit = Math.Max(1, limit); }
         public Profile Clone() { var p = new Profile(Step, Limit); p.Rows = new Dictionary<long, double>(Rows); p.insertion = new Queue<long>(insertion); p.PrunedRows = PrunedRows; return p; }
+        // A tick volume profile: each traded price's volume in its own row at `step`, lowest price first.
+        public static Profile FromPrices(double step, IEnumerable<KeyValuePair<double, double>> prices)
+        {
+            var p = new Profile(step, 1);
+            foreach (KeyValuePair<double, double> x in prices.OrderBy(x => x.Key))
+            {
+                long k = MathEx.Bin(x.Key, step); double v;
+                if (!p.Rows.TryGetValue(k, out v)) p.insertion.Enqueue(k);
+                p.Rows[k] = v + x.Value;
+            }
+            return p;
+        }
         public void Add(Bar b, bool capped)
         {
             long lo = MathEx.Bin(b.Low, Step), hi = MathEx.Bin(b.High, Step);
@@ -543,6 +555,12 @@ namespace TatankaTrading.AmtToolkit
         private int above, below, total, otfUp, otfDn, tpoPeriod = -1;
         private bool trap, resolved, trapAlert, bullSpike, auction, isTrapDay, outsideAbove, outsideBelow, gapUp, gapDown, rule, dayFull, weekFull, monthFull, macroFull;
         private DateTime? vaEntry;
+        // The prior day's value from its trades at one-tick rows (as a tick volume profile) when the indicator has
+        // them: TradeValue(first, end, minuteVolume) gives the RTH window's (price, volume) pairs, or null and the
+        // day's minutes are used. vaFirst/vaEnd: the window; lastVa*: the one prevDay was worked out from.
+        public Func<DateTime, DateTime, double, List<KeyValuePair<double, double>>> TradeValue;
+        private DateTime vaFirst = DateTime.MinValue, vaEnd = DateTime.MinValue, lastVaFirst = DateTime.MinValue, lastVaEnd = DateTime.MinValue;
+        private double lastVaVolume;
         private string inventoryFrozen = "---", dayType = "DEVELOPING", pivotBias = "---";
         private uint dayColor = AmtPalette.Gray;
         private double spStep;
@@ -574,6 +592,29 @@ namespace TatankaTrading.AmtToolkit
             return e;
         }
         public void ReplaceLevels(List<Level> levels) { Levels = levels.Select(x => x.Clone()).ToList(); pivotBias = "---"; }
+        private ProfileStats DayValue()
+        {
+            ProfileStats minutes = day.Stats(S.cc_va_pct);
+            lastVaFirst = vaFirst; lastVaEnd = vaEnd; lastVaVolume = minutes.Total;
+            return TickValue(vaFirst, vaEnd, minutes.Total) ?? minutes;
+        }
+        private ProfileStats TickValue(DateTime first, DateTime end, double minuteVolume)
+        {
+            if (TradeValue == null || first == DateTime.MinValue) return null;
+            List<KeyValuePair<double, double>> prices = TradeValue(first, end, minuteVolume);
+            if (prices == null || prices.Count == 0) return null;
+            return Profile.FromPrices(Tick > 0 ? Tick : Step, prices).Stats(S.cc_va_pct);
+        }
+        // The ticks of the day just ended came after its roll (the chart was loading): its value from them from now
+        // on, and whether the RTH open was outside it. True when that changed it.
+        public bool RefreshPrevDay()
+        {
+            ProfileStats t = TickValue(lastVaFirst, lastVaEnd, lastVaVolume);
+            if (t == null || (t.Poc == prevDay.Poc && t.Vah == prevDay.Vah && t.Val == prevDay.Val)) return false;
+            prevDay = t;
+            if (MathEx.Valid(rthO) && rthStart >= dayStart) { outsideAbove = rthO > prevDay.Vah; outsideBelow = rthO < prevDay.Val; }
+            return true;
+        }
         private bool Was(string session) { return previous != null && MathEx.InSession(previous.Start, session); }
         private static double Max(double a, double b) { return MathEx.Valid(a) ? Math.Max(a, b) : b; }
         private static double Min(double a, double b) { return MathEx.Valid(a) ? Math.Min(a, b) : b; }
@@ -638,11 +679,12 @@ namespace TatankaTrading.AmtToolkit
             bool spikeWindow = MathEx.InSession(b.Start, S.spikeTimeRange), spSession = MathEx.InSession(b.Start, S.sp_rth_session);
             if (newDay)
             {
-                if (td != DateTime.MinValue && dayFull && day.Rows.Count > 0) prevDay = day.Stats(S.cc_va_pct);
+                if (td != DateTime.MinValue && dayFull && day.Rows.Count > 0) prevDay = DayValue(); else lastVaFirst = DateTime.MinValue;
                 if (!S.pd_use_rth && td != DateTime.MinValue) { pdH = tradeH; pdL = tradeL; }
                 NakedRoll(nd, "Daily", dayFull, S.npoc_d_show, S.npoc_w_d, b.Start);
                 dayFull = td != DateTime.MinValue || MathEx.Minute(b.Start) == 1020;
                 day = new Profile(ValueStep(rowMult), S.MaxProfileRows); nd = new Profile(NakedStep(rowMult), S.MaxProfileRows);
+                vaFirst = vaEnd = DateTime.MinValue;
                 td = d; dayStart = b.Start; tradeH = b.High; tradeL = b.Low; rule = false; vaEntry = null; rthO = double.NaN;
                 contextHlc = contextVol = 0;
                 above = below = total = 0; trapAlert = false; trap = resolved = false;
@@ -729,7 +771,11 @@ namespace TatankaTrading.AmtToolkit
                 main = new Profile(RowStep(rowMult), S.MaxProfileRows); mainKey = pk; mainStart = b.Start;
             }
             // Prior-day value is built from the RTH Session for VA only (08:30-15:00 CT by default), the Dalton convention.
-            foreach (Bar q in Aggregate(raw, calc)) { if (mainWindow) main.Add(q, true); if (S.cc_enable && MathEx.InSession(q.Start, S.cc_sess_def)) day.Add(q, true); }
+            foreach (Bar q in Aggregate(raw, calc))
+            {
+                if (mainWindow) main.Add(q, true);
+                if (S.cc_enable && MathEx.InSession(q.Start, S.cc_sess_def)) { day.Add(q, true); if (vaFirst == DateTime.MinValue) vaFirst = q.Start; vaEnd = q.End; }
+            }
             ProfileStats dev = main.Stats(S.mvp_val_pct);
             UpdateTpo(b, spSession);
             contextHlc += (b.High + b.Low + b.Close) / 3 * b.Volume; contextVol += b.Volume;
@@ -1876,6 +1922,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         private object sync = new object();
         private Settings cfg;
         private Engine engine;
+        // Tick history of recent RTH sessions for the prior-day value (BarsRequest, answered on another thread).
+        private sealed class TickDay
+        {
+            public DateTime Start, End;   // CT
+            public readonly ManualResetEventSlim Done = new ManualResetEventSlim(false);
+            public Dictionary<DateTime, Dictionary<double, double>> Minutes;   // minute start (CT) -> price -> volume
+            public bool Ok;
+        }
+        private List<TickDay> tickDays;
+        private DateTime tickWaitUntil;
+        private volatile bool tickArrived;
         private DailyHistory daily;
         private TimeZoneInfo central, appZone;
         private SortedDictionary<DateTime, Bar> minuteBars;
@@ -1968,6 +2025,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     cfg = ReadSettings(); ValidateSettings(cfg);
                     central = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
                     appZone = NinjaTrader.Core.Globals.GeneralOptions.TimeZoneInfo;
+                    tickDays = new List<TickDay>(); tickArrived = false;
+                    if (cfg.cc_enable && PdTickSessions > 0) RequestTickDays();
                     daily = new DailyHistory(cfg.daily_atr_length);
                     if (BarsPeriod.BarsPeriodType != BarsPeriodType.Minute || BarsPeriod.Value < 1 || BarsPeriod.Value > 30)
                         throw new ArgumentException("Use a standard 1–30 minute chart. Tick, range, Renko, Heiken Ashi and daily bars are not supported by this port.");
@@ -2003,6 +2062,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                         sent = null; alertTimes = null; runtimeOwner = null;
                     }
                 }
+            }
+            else if (State == State.Realtime)
+            {
+                PatchPrevDay();
             }
             else if (State == State.Transition)
             {
@@ -2054,7 +2117,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (bip != 0) return;
                     Bar current = ReadBar(0, 0, BarsPeriod.Value);
                     if (State == State.Realtime) firstLiveBar = Math.Min(firstLiveBar, current.Index);
-                    if (engine == null) engine = new Engine(cfg, Instrument.MasterInstrument.Name, TickSize, current.Close, BarsPeriod.Value);
+                    if (engine == null) { engine = new Engine(cfg, Instrument.MasterInstrument.Name, TickSize, current.Close, BarsPeriod.Value); engine.TradeValue = TickValue; }
                     if (pending != null && current.Index != pending.Index)
                     {
                         // On a shared timestamp NT updates the primary first. Waiting until the next primary
@@ -2066,6 +2129,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     pending = current;
                     if (!historical)
                     {
+                        if (IsFirstTickOfBar && cfg.cc_enable && PdTickSessions > 0) RequestClosedSession(current.Start);
                         ReadLevelsFile();
                         if ((DateTime.UtcNow - lastPreview).TotalMilliseconds >= 100 || IsFirstTickOfBar) { Preview(false); lastPreview = DateTime.UtcNow; }
                         else if (snapshot != null)
@@ -2076,6 +2140,114 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                     else if (CurrentBar >= Bars.Count - 2) Preview(true);
                 }
+                catch (Exception ex) { Fail(ex); }
+            }
+        }
+        // --- the prior day's value from ticks -------------------------------------------------------------
+        private bool RthWindow(DateTime date, out DateTime start, out DateTime end)
+        {
+            string[] range = cfg.cc_sess_def.Split(':')[0].Split('-');
+            int a = int.Parse(range[0].Substring(0, 2)) * 60 + int.Parse(range[0].Substring(2));
+            int b = int.Parse(range[1].Substring(0, 2)) * 60 + int.Parse(range[1].Substring(2));
+            start = date.Date.AddMinutes(a); end = b > a ? date.Date.AddMinutes(b) : date.Date.AddDays(1).AddMinutes(b);
+            return MathEx.InSession(start, cfg.cc_sess_def);
+        }
+        private void RequestTickDays()
+        {
+            DateTime now = CT(NinjaTrader.Core.Globals.Now);
+            int found = 0;
+            for (DateTime d = now.Date; found < PdTickSessions && d > now.Date.AddDays(-45); d = d.AddDays(-1))
+            {
+                DateTime start, end;
+                if (!RthWindow(d, out start, out end) || end > now) continue;   // today's: asked for when it closes
+                RequestTickDay(start, end); found++;
+            }
+            tickWaitUntil = DateTime.UtcNow.AddSeconds(60);   // the load waits this long at most, in all, for them
+        }
+        private void RequestClosedSession(DateTime barStart)
+        {
+            DateTime start, end;
+            if (RthWindow(barStart, out start, out end) && barStart >= end && barStart < end.AddHours(2)) RequestTickDay(start, end);
+        }
+        private void RequestTickDay(DateTime start, DateTime end)
+        {
+            if (tickDays.Any(x => x.Start == start)) return;
+            var day = new TickDay { Start = start, End = end };
+            tickDays.Add(day);
+            try
+            {
+                var request = new BarsRequest(Instrument, Local(start.AddMinutes(-1)), Local(end.AddMinutes(1)))
+                {
+                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Tick, Value = 1 },
+                    TradingHours = Bars.TradingHours
+                };
+                request.Request((r, code, message) => TickDayLoaded(day, r, code, message));
+            }
+            catch (Exception ex) { Print(AmtBrand.Short + ": tick history not requested (" + ex.Message + "); the prior day's value comes from 1-minute bars."); day.Done.Set(); }
+        }
+        private void TickDayLoaded(TickDay day, BarsRequest r, ErrorCode code, string message)
+        {
+            try
+            {
+                var minutes = new Dictionary<DateTime, Dictionary<double, double>>();
+                if (code == ErrorCode.NoError && r != null && r.Bars != null)
+                {
+                    for (int i = 0; i < r.Bars.Count; i++)
+                    {
+                        DateTime t = CT(r.Bars.GetTime(i));
+                        // a trade on the minute belongs to the minute it ends, as NinjaTrader builds 1-minute bars
+                        long rem = t.Ticks % TimeSpan.TicksPerMinute;
+                        DateTime m = new DateTime(t.Ticks - rem);
+                        if (rem == 0) m = m.AddMinutes(-1);
+                        if (m < day.Start || m >= day.End) continue;
+                        Dictionary<double, double> prices;
+                        if (!minutes.TryGetValue(m, out prices)) minutes[m] = prices = new Dictionary<double, double>();
+                        double price = r.Bars.GetClose(i), v;
+                        prices.TryGetValue(price, out v);
+                        prices[price] = v + r.Bars.GetVolume(i);
+                    }
+                    day.Minutes = minutes; day.Ok = true;
+                }
+                else Print(AmtBrand.Short + ": tick history for " + day.Start.ToString("yyyy-MM-dd") + " unavailable (" + code + " " + message + "); 1-minute bars used.");
+            }
+            catch (Exception ex) { Print(AmtBrand.Short + ": tick history not read (" + ex.Message + ")."); }
+            finally
+            {
+                day.Done.Set(); tickArrived = true;
+                try { if (r != null) r.Dispose(); } catch { }
+                try { if (State == State.Realtime) TriggerCustomEvent(o => PatchPrevDay(), null); } catch { }
+            }
+        }
+        // Engine.TradeValue: the session's trades in [first, end), or null for its minutes (not downloaded, an older
+        // day, or fewer contracts than its 1-minute bars: incomplete). The load waits for a requested session up to
+        // tickWaitUntil; live it never waits (the next roll comes two hours after the close).
+        private List<KeyValuePair<double, double>> TickValue(DateTime first, DateTime end, double minuteVolume)
+        {
+            if (tickDays == null) return null;
+            TickDay day = tickDays.FirstOrDefault(x => x.Start <= first && end <= x.End);
+            if (day == null) return null;
+            if (!day.Done.IsSet)
+            {
+                TimeSpan left = tickWaitUntil - DateTime.UtcNow;
+                if (State != State.Historical || left <= TimeSpan.Zero || !day.Done.Wait(left)) return null;
+            }
+            if (!day.Ok || day.Minutes == null) return null;
+            var sum = new Dictionary<double, double>(); double total = 0;
+            foreach (KeyValuePair<DateTime, Dictionary<double, double>> m in day.Minutes)
+            {
+                if (m.Key < first || m.Key >= end) continue;
+                foreach (KeyValuePair<double, double> x in m.Value) { double v; sum.TryGetValue(x.Key, out v); sum[x.Key] = v + x.Value; total += x.Value; }
+            }
+            return total >= minuteVolume * 0.99 && total > 0 ? sum.ToList() : null;
+        }
+        private void PatchPrevDay()
+        {
+            if (!tickArrived || sync == null) return;
+            lock (sync)
+            {
+                if (terminated || engine == null || fault.Length != 0) return;
+                tickArrived = false;
+                try { if (engine.RefreshPrevDay() && pending != null) { Preview(false); if (ChartControl != null) ForceRefresh(); } }
                 catch (Exception ex) { Fail(ex); }
             }
         }
@@ -2561,6 +2733,7 @@ cc_col_active = BrushFrom(0x129C27B0u);
 cc_col_conf = BrushFrom(0x12EA80FCu);
 cc_va_pct = 0.68;
 cc_sess_def = "0830-1500:23456";
+PdTickSessions = 5;
 pw_enable = true;
 pw_col = BrushFrom(0xFFFFFFFFu);
 pw_c_txt = BrushFrom(0xFFFFFFFFu);
@@ -3540,6 +3713,9 @@ public Brush cc_col_conf { get; set; }
 public double cc_va_pct { get; set; }
 [Display(Name="RTH Session for VA (CT)", Description="Bars in this session build the prior-day value (pdPOC, pdVAH, pdVAL). Its first bar is the RTH open used by OPEN, the gap test and the 80% Rule.", GroupName="4. Previous Day Value & 80% Rule", Order=52)]
 public string cc_sess_def { get; set; }
+[Range(0, 20)]
+[Display(Name="Value From Ticks (Sessions)", Description="pdPOC, pdVAH and pdVAL from every trade at one-tick rows (as a tick volume profile) for this many recent RTH sessions, downloaded as the chart loads and after each close; older days from 1-minute bars. 0: 1-minute bars only (before v1.2.0).", GroupName="4. Previous Day Value & 80% Rule", Order=53)]
+public int PdTickSessions { get; set; }
 [Display(Name="Enable Prev Week Levels", GroupName="9. Previous Week", Order=129)]
 public bool pw_enable { get; set; }
 [Display(Name="Show pwHigh", GroupName="9. Previous Week", Order=130)]
