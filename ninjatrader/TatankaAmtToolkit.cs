@@ -457,6 +457,16 @@ namespace TatankaTrading.AmtToolkit
             }
             return p;
         }
+        // A minute's trades: each price's volume in its row (a tick volume profile, one minute at a time).
+        public void AddPrices(IEnumerable<KeyValuePair<double, double>> prices)
+        {
+            foreach (KeyValuePair<double, double> x in prices.OrderBy(x => x.Key))
+            {
+                long k = MathEx.Bin(x.Key, Step); double v;
+                if (!Rows.TryGetValue(k, out v)) { while (Rows.Count >= Limit) { Rows.Remove(insertion.Dequeue()); PrunedRows++; } insertion.Enqueue(k); }
+                Rows[k] = v + x.Value;
+            }
+        }
         public void Add(Bar b, bool capped)
         {
             long lo = MathEx.Bin(b.Low, Step), hi = MathEx.Bin(b.High, Step);
@@ -578,6 +588,10 @@ namespace TatankaTrading.AmtToolkit
         private DateTime vaFirst = DateTime.MinValue, vaEnd = DateTime.MinValue, lastVaFirst = DateTime.MinValue, lastVaEnd = DateTime.MinValue;
         private List<KeyValuePair<double, double>> dayTicks; private DateTime dayTicksFirst = DateTime.MinValue;   // the prior day's trades
         private ProfileStats mainStats;   // the main profile's value area when it is drawn from those trades (TickProfile)
+        // The current Session or Weekly profile from its trades (v1.2.2): MinuteTrades(minute start, its 1-minute volume)
+        // gives that minute's (price, volume) pairs when all of its trades are known, or null and its 1-minute bar is
+        // spread over its range as before. Monthly and Yearly profiles, and older periods, use 1-minute bars.
+        public Func<DateTime, double, List<KeyValuePair<double, double>>> MinuteTrades;
         private double lastVaVolume;
         private string inventoryFrozen = "---", dayType = "DEVELOPING", pivotBias = "---";
         private uint dayColor = AmtPalette.Gray;
@@ -849,12 +863,19 @@ namespace TatankaTrading.AmtToolkit
                 main = new Profile(RowStep(rowMult), S.MaxProfileRows); mainKey = pk; mainStart = b.Start; mainStats = null;
             }
             // Prior-day value is built from the RTH Session for VA only (08:30-15:00 CT by default), the Dalton convention.
+            bool tradeRows = MinuteTrades != null && (S.mvp_tf_mode == "Session" || S.mvp_tf_mode == "Weekly") && subbars != null && subbars.Count > 0;
             foreach (Bar q in Aggregate(raw, calc))
             {
                 mm.Add(q, true);
-                if (mainWindow) main.Add(q, true);
+                if (mainWindow && !tradeRows) main.Add(q, true);
                 if (S.cc_enable && MathEx.InSession(q.Start, S.cc_sess_def)) { day.Add(q, true); if (vaFirst == DateTime.MinValue) vaFirst = q.Start; vaEnd = q.End; }
             }
+            if (mainWindow && tradeRows)
+                foreach (Bar one in subbars)
+                {
+                    List<KeyValuePair<double, double>> trades = MinuteTrades(one.Start, one.Volume);
+                    if (trades != null && trades.Count > 0) main.AddPrices(trades); else main.Add(one, true);
+                }
             ProfileStats dev = mainStats ?? main.Stats(S.mvp_val_pct);
             UpdateTpo(b, spSession);
             contextHlc += (b.High + b.Low + b.Close) / 3 * b.Volume; contextVol += b.Volume;
@@ -2032,8 +2053,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             public readonly ManualResetEventSlim Done = new ManualResetEventSlim(false);
             public Dictionary<DateTime, Dictionary<double, double>> Minutes;   // minute start (CT) -> price -> volume
             public bool Ok;
+            public DateTime Last = DateTime.MinValue;   // its last trade (CT)
         }
         private List<TickDay> tickDays;
+        // The current Session or Weekly profile's trades (v1.2.2): downloaded from the period's start as the chart loads
+        // (periodTicks), then taken live, per minute (liveMinutes; from the download's last trade on).
+        private TickDay periodTicks; private DateTime periodWaitUntil;
+        private Dictionary<DateTime, Dictionary<double, double>> liveMinutes;
         private DateTime tickWaitUntil;
         private volatile bool tickArrived;
         private DailyHistory daily;
@@ -2119,6 +2145,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     appZone = NinjaTrader.Core.Globals.GeneralOptions.TimeZoneInfo;
                     tickDays = new List<TickDay>(); tickArrived = false;
                     if (cfg.cc_enable && PdTickSessions > 0) RequestTickDays();
+                    periodTicks = null; liveMinutes = new Dictionary<DateTime, Dictionary<double, double>>();
+                    if (ProfileTicks) RequestPeriodTicks();
                     daily = new DailyHistory(cfg.daily_atr_length);
                     if (BarsPeriod.BarsPeriodType != BarsPeriodType.Minute || BarsPeriod.Value < 1 || BarsPeriod.Value > 30)
                         throw new ArgumentException("Use a standard 1–30 minute chart. Tick, range, Renko, Heiken Ashi and daily bars are not supported by this port.");
@@ -2148,7 +2176,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (discord != null) discord.Dispose();
                         // NinjaTrader can retain a terminated indicator instance. Release
                         // its histories and profiles without touching property-grid clones.
-                        snapshot = null; previousFrame = null; pending = null; engine = null; daily = null;
+                        snapshot = null; previousFrame = null; pending = null; engine = null; daily = null; periodTicks = null; liveMinutes = null;
                         samples = null; histogramCache = null; historicalLines = null; publishedHistory = null;
                         minuteBars = null; macroBars = null; levelsSource = null; levelAlerts = null;
                         sent = null; alertTimes = null; runtimeOwner = null;
@@ -2209,7 +2237,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (bip != 0) return;
                     Bar current = ReadBar(0, 0, BarsPeriod.Value);
                     if (State == State.Realtime) firstLiveBar = Math.Min(firstLiveBar, current.Index);
-                    if (engine == null) { engine = new Engine(cfg, Instrument.MasterInstrument.Name, TickSize, current.Close, BarsPeriod.Value); engine.TradeValue = TickValue; }
+                    if (engine == null) { engine = new Engine(cfg, Instrument.MasterInstrument.Name, TickSize, current.Close, BarsPeriod.Value); engine.TradeValue = TickValue; if (ProfileTicks) engine.MinuteTrades = MinuteTradesFor; }
                     if (pending != null && current.Index != pending.Index)
                     {
                         // On a shared timestamp NT updates the primary first. Waiting until the next primary
@@ -2276,6 +2304,115 @@ namespace NinjaTrader.NinjaScript.Indicators
                 request.Request((r, code, message) => TickDayLoaded(day, r, code, message));
             }
             catch (Exception ex) { Print(AmtBrand.Short + ": tick history not requested (" + ex.Message + "); the prior day's value comes from 1-minute bars."); day.Done.Set(); }
+        }
+        // A trade on the minute belongs to the minute it ends, as NinjaTrader builds 1-minute bars: its minute's start.
+        private static DateTime TradeMinute(DateTime t)
+        {
+            long rem = t.Ticks % TimeSpan.TicksPerMinute;
+            DateTime m = new DateTime(t.Ticks - rem);
+            return rem == 0 ? m.AddMinutes(-1) : m;
+        }
+        // The current Session or Weekly profile's ticks, from its start: the week's Sunday 17:00 open, or the Session
+        // Time window that began last (to its end).
+        private void RequestPeriodTicks()
+        {
+            if (!cfg.mvp_master || (cfg.mvp_tf_mode != "Session" && cfg.mvp_tf_mode != "Weekly")) return;
+            DateTime now = CT(NinjaTrader.Core.Globals.Now), start, end = now;
+            if (cfg.mvp_tf_mode == "Weekly") start = MathEx.Week(MathEx.TradingDate(now)).AddDays(-1).AddHours(17);
+            else
+            {
+                string[] range = cfg.mvp_sess_time.Split(':')[0].Split('-');
+                int a = int.Parse(range[0].Substring(0, 2)) * 60 + int.Parse(range[0].Substring(2));
+                int z = int.Parse(range[1].Substring(0, 2)) * 60 + int.Parse(range[1].Substring(2));
+                start = now.Date.AddMinutes(a); if (start > now) start = start.AddDays(-1);
+                DateTime close = start.AddMinutes(z > a ? z - a : z + 1440 - a); if (close < end) end = close;
+            }
+            var day = new TickDay { Start = start, End = end.AddMinutes(5) };
+            periodTicks = day; periodWaitUntil = DateTime.UtcNow.AddSeconds(120);   // the load waits this long at most for them
+            try
+            {
+                var request = new BarsRequest(Instrument, Local(start.AddMinutes(-1)), Local(end.AddMinutes(5)))
+                {
+                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Tick, Value = 1 },
+                    TradingHours = Bars.TradingHours
+                };
+                request.Request((r, code, message) => PeriodTicksLoaded(day, r, code, message));
+            }
+            catch (Exception ex) { Print(AmtBrand.Short + ": tick history for the profile not requested (" + ex.Message + "); 1-minute bars used."); day.Done.Set(); }
+        }
+        private void PeriodTicksLoaded(TickDay day, BarsRequest r, ErrorCode code, string message)
+        {
+            try
+            {
+                var minutes = new Dictionary<DateTime, Dictionary<double, double>>();
+                if (code == ErrorCode.NoError && r != null && r.Bars != null)
+                {
+                    DateTime last = DateTime.MinValue;
+                    for (int i = 0; i < r.Bars.Count; i++)
+                    {
+                        DateTime t = CT(r.Bars.GetTime(i)), m = TradeMinute(t);
+                        if (t > last) last = t;
+                        if (m < day.Start) continue;
+                        Dictionary<double, double> prices;
+                        if (!minutes.TryGetValue(m, out prices)) minutes[m] = prices = new Dictionary<double, double>();
+                        double price = r.Bars.GetClose(i), v;
+                        prices.TryGetValue(price, out v);
+                        prices[price] = v + r.Bars.GetVolume(i);
+                    }
+                    day.Minutes = minutes; day.Last = last; day.Ok = true;
+                }
+                else Print(AmtBrand.Short + ": tick history for the profile unavailable (" + code + " " + message + "); 1-minute bars used.");
+            }
+            catch (Exception ex) { Print(AmtBrand.Short + ": tick history for the profile not read (" + ex.Message + ")."); }
+            finally
+            {
+                day.Done.Set();
+                try { if (r != null) r.Dispose(); } catch { }
+            }
+        }
+        // Live trades, per minute, for the current profile: from the download's last trade on (none while it runs).
+        protected override void OnMarketData(MarketDataEventArgs e)
+        {
+            if (e.MarketDataType != MarketDataType.Last || !ProfileTicks || sync == null) return;
+            lock (sync)
+            {
+                if (terminated || liveMinutes == null || cfg == null || !cfg.mvp_master || (cfg.mvp_tf_mode != "Session" && cfg.mvp_tf_mode != "Weekly")) return;
+                TickDay p = periodTicks;
+                if (p != null && !p.Done.IsSet) return;
+                DateTime t = CT(e.Time);
+                if (p != null && p.Ok && t <= p.Last) return;
+                DateTime m = TradeMinute(t);
+                Dictionary<double, double> prices;
+                if (!liveMinutes.TryGetValue(m, out prices))
+                {
+                    liveMinutes[m] = prices = new Dictionary<double, double>();
+                    foreach (DateTime old in liveMinutes.Keys.Where(x => x < m.AddDays(-8)).ToList()) liveMinutes.Remove(old);
+                }
+                double v; prices.TryGetValue(e.Price, out v); prices[e.Price] = v + e.Volume;
+            }
+        }
+        // Engine.MinuteTrades: the minute's trades when they add up to its 1-minute bar's volume, else null (not
+        // downloaded, before the live trades began, or the download overlapping them).
+        private List<KeyValuePair<double, double>> MinuteTradesFor(DateTime minute, double volume)
+        {
+            if (volume <= 0) return null;
+            var sum = new Dictionary<double, double>();
+            TickDay p = periodTicks;
+            if (p != null && minute >= p.Start && minute < p.End)
+            {
+                if (!p.Done.IsSet)
+                {
+                    TimeSpan left = periodWaitUntil - DateTime.UtcNow;
+                    if (State != State.Historical || left <= TimeSpan.Zero || !p.Done.Wait(left)) return null;
+                }
+                Dictionary<double, double> got;
+                if (p.Ok && p.Minutes != null && p.Minutes.TryGetValue(minute, out got)) foreach (KeyValuePair<double, double> x in got) sum[x.Key] = x.Value;
+            }
+            Dictionary<double, double> live;
+            if (liveMinutes != null && liveMinutes.TryGetValue(minute, out live))
+                foreach (KeyValuePair<double, double> x in live) { double v; sum.TryGetValue(x.Key, out v); sum[x.Key] = v + x.Value; }
+            double total = sum.Values.Sum();
+            return total >= volume * 0.99 && total <= volume * 1.01 ? sum.ToList() : null;
         }
         private void TickDayLoaded(TickDay day, BarsRequest r, ErrorCode code, string message)
         {
@@ -2836,6 +2973,7 @@ cc_col_conf = BrushFrom(0x12EA80FCu);
 cc_va_pct = 0.68;
 cc_sess_def = "0830-1500:23456";
 PdTickSessions = 5;
+ProfileTicks = true;
 pw_enable = true;
 pw_col = BrushFrom(0xFFFFFFFFu);
 pw_c_txt = BrushFrom(0xFFFFFFFFu);
@@ -3430,6 +3568,8 @@ public string mvp_tf_mode { get; set; }
 public string mvp_sess_time { get; set; }
 [Display(Name="Session Duration (Hours)", GroupName="11. Volume Profile", Order=157)]
 public double mvp_sess_dur { get; set; }
+[Display(Name="Profile From Ticks", Description="The current Session or Weekly profile and its Developing POC, VAH and VAL from every trade: the period's ticks are downloaded as the chart loads (up to two minutes), then taken live. Monthly and Yearly profiles, older periods and any minute whose trades are missing use 1-minute bars. Off: 1-minute bars only (before v1.2.2).", GroupName="11. Volume Profile", Order=158)]
+public bool ProfileTicks { get; set; }
 [Display(Name="Calc Precision", GroupName="11. Volume Profile", Order=158)]
 public string mvp_calc_tf { get; set; }
 [Range(0.25, double.MaxValue)]

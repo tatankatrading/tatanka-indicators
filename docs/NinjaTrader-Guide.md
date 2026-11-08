@@ -174,6 +174,10 @@ Every pd line (pdHigh, pdLow, pdOpen, pdPOC, pdVAH, pdVAL) switches to the sessi
 
 **Value Area %** in this group is a fraction: 0.68 means 68%. Set 0.70 to compare with a 70% volume profile. The **Value Area %** in *11. Volume Profile* is the developing profile's and takes a percent.
 
+### Current profile from ticks (v1.2.2)
+
+With **11. Volume Profile → Profile Period** on Session or Weekly (the default), the current profile, its POC and value area and the Developing POC, VAH and VAL lines come from every trade, as a tick volume profile builds them, at the Row Scale's rows. The Toolkit downloads the ticks from the start of the current session or week as the chart loads (late in the week that is millions of NQ trades, so the load is slower than before; it waits up to two minutes for them), then takes each trade live. A minute whose ticks are missing or incomplete (not downloaded, the minute or two while the chart loads, a download that took longer than two minutes) uses its 1-minute bar as before. Monthly and Yearly profiles and older weeks use 1-minute bars. **11. Volume Profile → Profile From Ticks** off: 1-minute bars only, as before v1.2.2.
+
 ## 7. Updating
 
 NinjaTrader has no auto-update. When a new version is posted:
