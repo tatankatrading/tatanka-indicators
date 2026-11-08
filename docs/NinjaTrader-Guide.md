@@ -26,7 +26,7 @@ The Tatanka AMT Toolkit puts a complete Auction Market Theory read on one chart.
 3. Pick the zip and confirm. NinjaTrader compiles it and says the import succeeded.
 4. Open a chart, right-click → **Indicators**, double-click **Tatanka AMT Toolkit**, then **OK**.
 
-The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily history in the background. Until that's done the chart shows *"Tatanka AMT v1.2.0 — loading chart and secondary history…"*. It also downloads the tick history of the last 5 RTH sessions for the prior day's value (below); the first time on a PC that can add up to a minute.
+The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily history in the background. Until that's done the chart shows *"Tatanka AMT v1.2.1 — loading chart and secondary history…"*. It also downloads the tick history of the last 5 RTH sessions for the prior day's value (below); the first time on a PC that can add up to a minute.
 
 ## 2. Set up the chart
 
@@ -168,13 +168,15 @@ Every section follows the same order: on/off switches, lines, labels, then alert
 
 pdPOC, pdVAH and pdVAL come from every trade of the RTH session at one-tick rows, the way a tick volume profile builds them, for the last **5** sessions (**4. Previous Day Value & 80% Rule → Value From Ticks (Sessions)**). The Toolkit downloads that tick history as the chart loads and again after each RTH close, before the next session's roll. Older days, and any session whose tick history doesn't download or is short of its 1-minute volume, use 1-minute bars as before v1.2.0 (each minute's volume spread over its range), which on a fast day can put the POC 20 points or more away. Set it to 0 for 1-minute bars only. If the ticks arrive after the chart has loaded, the current pd lines switch to them; earlier days on the chart keep their 1-minute values until the chart reloads.
 
+Since v1.2.1 the prior day's profile is drawn from the same ticks, so its shaded value area ends at pdVAH and pdVAL and its peak is pdPOC. That needs **11. Volume Profile → Profile Period** on Session, its **Session Time** on the same hours as the prior day's value (08:30-15:00 CT by default) and the same **Value Area %** in groups 4 and 11. A Weekly, Monthly or Yearly profile shades the whole period's value area, which is not the prior day's. On NQ the profile's rows are a few ticks tall (**1. Global Settings → Profile Row Scale** Auto: 5x), so the shading can end up to one row from a line; set it to 1x for one-tick rows.
+
 **Value Area %** in this group is a fraction: 0.68 means 68%. Set 0.70 to compare with a 70% volume profile. The **Value Area %** in *11. Volume Profile* is the developing profile's and takes a percent.
 
 ## 7. Updating
 
 NinjaTrader has no auto-update. When a new version is posted:
 
-1. Compare the dashboard header (**Tatanka AMT v1.2.0**) with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
+1. Compare the dashboard header (**Tatanka AMT v1.2.1**) with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
 2. Download the new zip from the same link and import it the same way. Accept the overwrite.
 3. Reload the chart (F5). Your saved settings are kept.
 

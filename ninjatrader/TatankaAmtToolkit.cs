@@ -37,7 +37,7 @@ namespace TatankaTrading.AmtToolkit
     {
         public const string Name = "Tatanka AMT Toolkit";
         public const string Short = "Tatanka AMT";
-        public const string Version = "1.2.0";
+        public const string Version = "1.2.1";
         public const string Website = "tatankatrading.com";
     }
 
@@ -439,9 +439,9 @@ namespace TatankaTrading.AmtToolkit
         public Profile(double step, int limit) { if (step <= 0) throw new ArgumentException("Profile row size must be positive"); Step = step; Limit = Math.Max(1, limit); }
         public Profile Clone() { var p = new Profile(Step, Limit); p.Rows = new Dictionary<long, double>(Rows); p.insertion = new Queue<long>(insertion); p.PrunedRows = PrunedRows; return p; }
         // A tick volume profile: each traded price's volume in its own row at `step`, lowest price first.
-        public static Profile FromPrices(double step, IEnumerable<KeyValuePair<double, double>> prices)
+        public static Profile FromPrices(double step, IEnumerable<KeyValuePair<double, double>> prices, int limit = 1)
         {
-            var p = new Profile(step, 1);
+            var p = new Profile(step, limit);
             foreach (KeyValuePair<double, double> x in prices.OrderBy(x => x.Key))
             {
                 long k = MathEx.Bin(x.Key, step); double v;
@@ -560,6 +560,8 @@ namespace TatankaTrading.AmtToolkit
         // day's minutes are used. vaFirst/vaEnd: the window; lastVa*: the one prevDay was worked out from.
         public Func<DateTime, DateTime, double, List<KeyValuePair<double, double>>> TradeValue;
         private DateTime vaFirst = DateTime.MinValue, vaEnd = DateTime.MinValue, lastVaFirst = DateTime.MinValue, lastVaEnd = DateTime.MinValue;
+        private List<KeyValuePair<double, double>> dayTicks; private DateTime dayTicksFirst = DateTime.MinValue;   // the prior day's trades
+        private ProfileStats mainStats;   // the main profile's value area when it is drawn from those trades (TickProfile)
         private double lastVaVolume;
         private string inventoryFrozen = "---", dayType = "DEVELOPING", pivotBias = "---";
         private uint dayColor = AmtPalette.Gray;
@@ -596,14 +598,38 @@ namespace TatankaTrading.AmtToolkit
         {
             ProfileStats minutes = day.Stats(S.cc_va_pct);
             lastVaFirst = vaFirst; lastVaEnd = vaEnd; lastVaVolume = minutes.Total;
-            return TickValue(vaFirst, vaEnd, minutes.Total) ?? minutes;
+            dayTicks = null;
+            ProfileStats value = TickValue(vaFirst, vaEnd, minutes.Total) ?? minutes;
+            TickProfile();
+            return value;
         }
         private ProfileStats TickValue(DateTime first, DateTime end, double minuteVolume)
         {
             if (TradeValue == null || first == DateTime.MinValue) return null;
             List<KeyValuePair<double, double>> prices = TradeValue(first, end, minuteVolume);
             if (prices == null || prices.Count == 0) return null;
+            dayTicks = prices; dayTicksFirst = first;
             return Profile.FromPrices(Tick > 0 ? Tick : Step, prices).Stats(S.cc_va_pct);
+        }
+        private static string Hours(string session) { return (session ?? "").Split(':')[0].Trim(); }   // "0830-1500:23456": its hours
+        // The prior day's drawn profile from the same trades as its pdPOC/pdVAH/pdVAL (v1.2.1): its rows from them, its
+        // value area worked out at one-tick rows as the lines are, so the shaded area ends where the lines are (at the
+        // same Value Area %). Only a Session profile on the value area's own hours is that day's.
+        private void TickProfile()
+        {
+            if (dayTicks == null || S.mvp_tf_mode != "Session" || Hours(S.mvp_sess_time) != Hours(S.cc_sess_def)) return;
+            ProfileStats stats = Profile.FromPrices(Tick > 0 ? Tick : Step, dayTicks).Stats(S.mvp_val_pct);
+            if (main.Rows.Count > 0 && mainStart.Date == dayTicksFirst.Date)
+            {
+                main = Profile.FromPrices(main.Step, dayTicks, main.Limit); mainStats = stats; return;
+            }
+            for (int i = profiles.Count - 1; i >= 0; i--)
+            {
+                PastProfile p = profiles[i];
+                if (p.Start.Date != dayTicksFirst.Date) continue;
+                profiles[i] = new PastProfile { Profile = Profile.FromPrices(p.Profile.Step, dayTicks, p.Profile.Limit), Stats = stats, Start = p.Start, End = p.End, EndIndex = p.EndIndex };
+                return;
+            }
         }
         // The ticks of the day just ended came after its roll (the chart was loading): its value from them from now
         // on, and whether the RTH open was outside it. True when that changed it.
@@ -612,6 +638,7 @@ namespace TatankaTrading.AmtToolkit
             ProfileStats t = TickValue(lastVaFirst, lastVaEnd, lastVaVolume);
             if (t == null || (t.Poc == prevDay.Poc && t.Vah == prevDay.Vah && t.Val == prevDay.Val)) return false;
             prevDay = t;
+            TickProfile();
             if (MathEx.Valid(rthO) && rthStart >= dayStart) { outsideAbove = rthO > prevDay.Vah; outsideBelow = rthO < prevDay.Val; }
             return true;
         }
@@ -767,8 +794,8 @@ namespace TatankaTrading.AmtToolkit
             DateTime pk = ProfileKey(b); bool mainWindow = S.mvp_tf_mode != "Session" || MathEx.InSession(b.Start, S.mvp_sess_time);
             if (mainWindow && mainKey != pk)
             {
-                if (main.Rows.Count > 0) { profiles.Add(new PastProfile { Profile = main, Stats = main.Stats(S.mvp_val_pct), Start = mainStart, End = b.Start, EndIndex = b.Index }); if (profiles.Count > 12) profiles.RemoveAt(0); }
-                main = new Profile(RowStep(rowMult), S.MaxProfileRows); mainKey = pk; mainStart = b.Start;
+                if (main.Rows.Count > 0) { profiles.Add(new PastProfile { Profile = main, Stats = mainStats ?? main.Stats(S.mvp_val_pct), Start = mainStart, End = b.Start, EndIndex = b.Index }); if (profiles.Count > 12) profiles.RemoveAt(0); }
+                main = new Profile(RowStep(rowMult), S.MaxProfileRows); mainKey = pk; mainStart = b.Start; mainStats = null;
             }
             // Prior-day value is built from the RTH Session for VA only (08:30-15:00 CT by default), the Dalton convention.
             foreach (Bar q in Aggregate(raw, calc))
@@ -776,7 +803,7 @@ namespace TatankaTrading.AmtToolkit
                 if (mainWindow) main.Add(q, true);
                 if (S.cc_enable && MathEx.InSession(q.Start, S.cc_sess_def)) { day.Add(q, true); if (vaFirst == DateTime.MinValue) vaFirst = q.Start; vaEnd = q.End; }
             }
-            ProfileStats dev = main.Stats(S.mvp_val_pct);
+            ProfileStats dev = mainStats ?? main.Stats(S.mvp_val_pct);
             UpdateTpo(b, spSession);
             contextHlc += (b.High + b.Low + b.Close) / 3 * b.Volume; contextVol += b.Volume;
             double dailyVwap = contextVol > 0 ? contextHlc / contextVol : double.NaN;
