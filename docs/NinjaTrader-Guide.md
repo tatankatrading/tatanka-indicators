@@ -170,6 +170,8 @@ pdPOC, pdVAH and pdVAL come from every trade of the RTH session at one-tick rows
 
 Since v1.2.1 the prior day's profile is drawn from the same ticks at one-tick rows, so its tallest row is pdPOC and its shaded value area ends at pdVAH and pdVAL. That needs **11. Volume Profile → Profile Period** on Session, its **Session Time** on the same hours as the prior day's value (08:30-15:00 CT by default) and the same **Value Area %** in groups 4 and 11. A Weekly, Monthly or Yearly profile shades the whole period's value area, which is not the prior day's. If the ticks arrive after today's session has started (the chart opened mid-session and the download finished after it loaded), today's 80% Rule starts over from that bar on the tick values and its fill so far is cleared; an 80% Rule alert already sent on the 1-minute values stays sent.
 
+Every pd line (pdHigh, pdLow, pdOpen, pdPOC, pdVAH, pdVAL) switches to the day just closed at the same moment, the next trade date's open at 17:00 CT (before v1.2.1 pdHigh, pdLow and pdOpen switched at the 15:00 close, two hours before the value).
+
 **Value Area %** in this group is a fraction: 0.68 means 68%. Set 0.70 to compare with a 70% volume profile. The **Value Area %** in *11. Volume Profile* is the developing profile's and takes a percent.
 
 ## 7. Updating

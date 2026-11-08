@@ -548,6 +548,7 @@ namespace TatankaTrading.AmtToolkit
         private Bar previous;
         private DateTime td, week, month, mainKey, mainStart, weekStart, monthStart, dayStart, rthStart, ibStart, settleStart, spikeStart, macroKey;
         private double tradeH = double.NaN, tradeL = double.NaN, weekH = double.NaN, weekL = double.NaN, monthH = double.NaN, monthL = double.NaN;
+        private double pdNextH = double.NaN, pdNextL = double.NaN, pdNextO = double.NaN; private bool pdNext;   // the RTH just closed: pd from the next trade date
         private double pdH = double.NaN, pdL = double.NaN, pdO = double.NaN, pwH = double.NaN, pwL = double.NaN, pmH = double.NaN, pmL = double.NaN, weekOpen = double.NaN;
         private double rthH = double.NaN, rthL = double.NaN, rthO = double.NaN, rthPreviousOpen = double.NaN, ibH = double.NaN, ibL = double.NaN, ibWorkH, ibWorkL;
         private double ovnH = double.NaN, ovnL = double.NaN, settle = double.NaN, spike = double.NaN, preH = double.NaN, preL = double.NaN, frozenH, frozenL;
@@ -711,6 +712,7 @@ namespace TatankaTrading.AmtToolkit
             bool spikeWindow = MathEx.InSession(b.Start, S.spikeTimeRange), spSession = MathEx.InSession(b.Start, S.sp_rth_session);
             if (newDay)
             {
+                if (pdNext) { if (S.pd_use_rth) { pdH = pdNextH; pdL = pdNextL; } pdO = pdNextO; pdNext = false; }
                 if (td != DateTime.MinValue && dayFull && day.Rows.Count > 0) prevDay = DayValue(); else lastVaFirst = DateTime.MinValue;
                 if (!S.pd_use_rth && td != DateTime.MinValue) { pdH = tradeH; pdL = tradeL; }
                 NakedRoll(nd, "Daily", dayFull, S.npoc_d_show, S.npoc_w_d, b.Start);
@@ -754,7 +756,13 @@ namespace TatankaTrading.AmtToolkit
                 if (!Was(S.pd_sess_time)) { rthH = b.High; rthL = b.Low; rthPreviousOpen = b.Open; }
                 else { rthH = Max(rthH, b.High); rthL = Min(rthL, b.Low); }
             }
-            if (!pdSession && Was(S.pd_sess_time)) { if (S.pd_use_rth) { pdH = rthH; pdL = rthL; } pdO = rthPreviousOpen; }
+            if (!pdSession && Was(S.pd_sess_time))
+            {
+                // pdHigh, pdLow and pdOpen switch with pdPOC, pdVAH and pdVAL, at the next trade date's open: every pd line is
+                // the same day's (they switched at the RTH close, two hours before the value: v1.2.1)
+                pdNextH = rthH; pdNextL = rthL; pdNextO = rthPreviousOpen; pdNext = true;
+                if (newDay) { if (S.pd_use_rth) { pdH = pdNextH; pdL = pdNextL; } pdO = pdNextO; pdNext = false; }
+            }
             if (daily != null) { if (!MathEx.Valid(pdH)) pdH = daily.High; if (!MathEx.Valid(pdL)) pdL = daily.Low; }
             if (!rth && Was("0830-1500"))
             {
