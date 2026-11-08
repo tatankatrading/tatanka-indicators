@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Tatanka Trading LLC.
 // This Source Code Form is subject to the Mozilla Public License, v. 2.0.
 // If a copy of the MPL was not distributed with this file, obtain one at https://mozilla.org/MPL/2.0/.
-// Tatanka Periodic Volume Profile v1.0.0 for NinjaTrader 8 - tatankatrading.com
+// Tatanka Periodic Volume Profile v1.0.1 for NinjaTrader 8 - tatankatrading.com
 // Chart-only. One-minute source bars; uniform estimated volume across each bar's price ticks.
 // Guide (setup, calculation, TradingView differences): https://github.com/TatankaTrading/tatanka-indicators/blob/main/docs/Other-Indicators-Guide.md#periodic-volume-profile
 using System;
@@ -515,9 +515,16 @@ namespace TatankaPvpCore
         internal DateTime? Poc, Vah, Val;
         internal void Observe(double low, double high, DateTime time, Snapshot levels, bool showPoc, bool showVah, bool showVal)
         {
-            if (showPoc && !Poc.HasValue && low <= levels.Poc && high >= levels.Poc) Poc = time;
-            if (showVah && !Vah.HasValue && low <= levels.Vah && high >= levels.Vah) Vah = time;
-            if (showVal && !Val.HasValue && low <= levels.Val && high >= levels.Val) Val = time;
+            if (showPoc && !Poc.HasValue && Holds(low, high, levels.Poc)) Poc = time;
+            if (showVah && !Vah.HasValue && Holds(low, high, levels.Vah)) Vah = time;
+            if (showVal && !Val.HasValue && Holds(low, high, levels.Val)) Val = time;
+        }
+        // A level is a tick count times the tick size (2600.1000000000004 on GC): a bar whose high is the level's price
+        // (2600.1) touches it (v1.0.1).
+        internal static bool Holds(double low, double high, double level)
+        {
+            double e = 1e-9 * Math.Max(1.0, Math.Abs(level));
+            return low <= level + e && high >= level - e;
         }
     }
 

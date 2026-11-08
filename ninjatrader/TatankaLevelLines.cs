@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Tatanka Trading LLC.
 // This Source Code Form is subject to the Mozilla Public License, v. 2.0.
 // If a copy of the MPL was not distributed with this file, obtain one at https://mozilla.org/MPL/2.0/.
-// Tatanka Level Lines v1.1.0 for NinjaTrader 8 - tatankatrading.com
+// Tatanka Level Lines v1.1.1 for NinjaTrader 8 - tatankatrading.com
 
 #region Using declarations
 using System;
@@ -556,6 +556,17 @@ namespace NinjaTrader.NinjaScript.Indicators
 			string p = Instrument != null
 				? Instrument.MasterInstrument.FormatPrice(price)
 				: price.ToString("0.00", CultureInfo.InvariantCulture);
+			if (Instrument != null && Instrument.MasterInstrument.TickSize > 0)
+			{
+				// A line between ticks (a range's mid on an odd number of ticks, a level typed off the tick) is labelled
+				// at its own price, not the tick it rounds to (v1.1.1).
+				double ticks = price / Instrument.MasterInstrument.TickSize;
+				if (Math.Abs(ticks - Math.Round(ticks)) > 1e-6)
+				{
+					int dot = p.IndexOf('.'), decimals = dot < 0 ? 0 : p.Length - dot - 1;
+					p = price.ToString("0." + new string('0', Math.Max(1, decimals)) + "####", CultureInfo.InvariantCulture);
+				}
+			}
 			return text.Length > 0 ? text + "  " + p : p;
 		}
 

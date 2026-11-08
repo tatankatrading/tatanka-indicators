@@ -26,7 +26,7 @@ The Tatanka AMT Toolkit puts a complete Auction Market Theory read on one chart.
 3. Pick the zip and confirm. NinjaTrader compiles it and says the import succeeded.
 4. Open a chart, right-click → **Indicators**, double-click **Tatanka AMT Toolkit**, then **OK**.
 
-The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily history in the background. Until that's done the chart shows *"Tatanka AMT v1.2.0 — loading chart and secondary history…"*. It also downloads the tick history of the last 5 RTH sessions for the prior day's value (below); the first time on a PC that can add up to a minute.
+The first load can take a while: the Toolkit loads 1-minute, 30-minute and daily history in the background. Until that's done the chart shows *"Tatanka AMT v1.2.2 — loading chart and secondary history…"*. It also downloads the tick history of the last 5 RTH sessions for the prior day's value (below); the first time on a PC that can add up to a minute.
 
 ## 2. Set up the chart
 
@@ -166,15 +166,23 @@ Every section follows the same order: on/off switches, lines, labels, then alert
 
 ### Prior day's value from ticks (v1.2.0)
 
-pdPOC, pdVAH and pdVAL come from every trade of the RTH session at one-tick rows, the way a tick volume profile builds them, for the last **5** sessions (**4. Previous Day Value & 80% Rule → Value From Ticks (Sessions)**). The Toolkit downloads that tick history as the chart loads and again after each RTH close, before the next session's roll. Older days, and any session whose tick history doesn't download or is short of its 1-minute volume, use 1-minute bars as before v1.2.0 (each minute's volume spread over its range), which on a fast day can put the POC 20 points or more away. Set it to 0 for 1-minute bars only. If the ticks arrive after the chart has loaded, the current pd lines switch to them; earlier days on the chart keep their 1-minute values until the chart reloads.
+pdPOC, pdVAH and pdVAL come from every trade of the RTH session at one-tick rows, the way a tick volume profile builds them, for the last **5** sessions (**4. Previous Day Value & 80% Rule → Value From Ticks (Sessions)**). The Toolkit downloads that tick history as the chart loads and again at each RTH close. Older days, and any session whose tick history doesn't download or is short of its 1-minute volume, use 1-minute bars as before v1.2.0 (each minute's volume spread over its range), which on a fast day can put the POC 20 points or more away. Set it to 0 for 1-minute bars only. If the ticks arrive after the chart has loaded, the current pd lines switch to them; earlier days on the chart keep their 1-minute values until the chart reloads.
+
+Since v1.2.1 the prior day's profile is drawn from the same ticks at one-tick rows, so its tallest row is pdPOC and its shaded value area ends at pdVAH and pdVAL. That needs **11. Volume Profile → Profile Period** on Session, its **Session Time** on the same hours as the prior day's value (08:30-15:00 CT by default) and the same **Value Area %** in groups 4 and 11. A Weekly, Monthly or Yearly profile shades the whole period's value area, which is not the prior day's. If the ticks arrive after today's session has started (the chart opened mid-session and the download finished after it loaded), today's 80% Rule starts over from that bar on the tick values and its fill so far is cleared; an 80% Rule alert already sent on the 1-minute values stays sent.
+
+Every pd line (pdHigh, pdLow, pdOpen, pdPOC, pdVAH, pdVAL) switches to the session just closed at its close, 15:00 CT by default (since v1.2.2), and that session's profile is redrawn from its ticks at the same moment. Live, the close's ticks take a few seconds to download: the lines and profile come from 1-minute bars until they arrive, then switch to the ticks. From the close to the 17:00 open the new lines start at the close, and the chart keeps the old ones over the day before it. Today's 80% Rule fill, the OPEN row and the day type stay measured against the value in force at today's open.
 
 **Value Area %** in this group is a fraction: 0.68 means 68%. Set 0.70 to compare with a 70% volume profile. The **Value Area %** in *11. Volume Profile* is the developing profile's and takes a percent.
+
+### Current profile from ticks (v1.2.2)
+
+With **11. Volume Profile → Profile Period** on Session or Weekly (the default), the current profile, its POC and value area and the Developing POC, VAH and VAL lines come from every trade, as a tick volume profile builds them, at the Row Scale's rows. The Toolkit downloads the ticks from the start of the current session or week as the chart loads (late in the week that is millions of NQ trades, so the load is slower than before; it waits up to two minutes for them), then takes each trade live. A minute whose ticks are missing or incomplete (not downloaded, the minute or two while the chart loads, a download that took longer than two minutes) uses its 1-minute bar as before. Monthly and Yearly profiles and older weeks use 1-minute bars. **11. Volume Profile → Profile From Ticks** off: 1-minute bars only, as before v1.2.2.
 
 ## 7. Updating
 
 NinjaTrader has no auto-update. When a new version is posted:
 
-1. Compare the dashboard header (**Tatanka AMT v1.2.0**) with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
+1. Compare the dashboard header (**Tatanka AMT v1.2.2**) with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
 2. Download the new zip from the same link and import it the same way. Accept the overwrite.
 3. Reload the chart (F5). Your saved settings are kept.
 
