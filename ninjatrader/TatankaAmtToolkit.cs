@@ -37,7 +37,7 @@ namespace TatankaTrading.AmtToolkit
     {
         public const string Name = "Tatanka AMT Toolkit";
         public const string Short = "Tatanka AMT";
-        public const string Version = "1.2.1";
+        public const string Version = "1.2.2";
         public const string Website = "tatankatrading.com";
     }
 
@@ -424,6 +424,13 @@ namespace TatankaTrading.AmtToolkit
             while (decimals < 8 && Math.Abs(q - Math.Round(q)) > 1e-8) { q *= 10; decimals++; }
             return snap.ToString("F" + decimals, CultureInfo.InvariantCulture);
         }
+        // A zone's half-width at the instrument's decimals, not snapped to a tick (an ATR zone's ±1.117 read ±1.00).
+        public static string Width(double width, double tick)
+        {
+            int decimals = 0; double q = tick;
+            while (decimals < 8 && Math.Abs(q - Math.Round(q)) > 1e-8) { q *= 10; decimals++; }
+            return width.ToString("F" + Math.Min(4, decimals), CultureInfo.InvariantCulture);
+        }
     }
     public sealed class ProfileStats
     {
@@ -548,7 +555,15 @@ namespace TatankaTrading.AmtToolkit
         private Bar previous;
         private DateTime td, week, month, mainKey, mainStart, weekStart, monthStart, dayStart, rthStart, ibStart, settleStart, spikeStart, macroKey;
         private double tradeH = double.NaN, tradeL = double.NaN, weekH = double.NaN, weekL = double.NaN, monthH = double.NaN, monthL = double.NaN;
-        private double pdNextH = double.NaN, pdNextL = double.NaN, pdNextO = double.NaN; private bool pdNext;   // the RTH just closed: pd from the next trade date
+        // Every pd line switches to the session that just closed at its close (v1.2.2): pdPOC/pdVAH/pdVAL and the drawn
+        // profile from its trades at the value area's close (valueRolled until the next trade date), pdHigh/pdLow/pdOpen
+        // at the pd session's. Lines drawn from then (vaRolledAt, pdRolledAt) to the next trade date's open.
+        private bool valueRolled; private DateTime vaRolledAt = DateTime.MinValue, pdRolledAt = DateTime.MinValue;
+        // The trade date's own reference: the value in force at its open (the 80% Rule, OPEN, day type) and the pd high
+        // and low its open was measured against; the close's roll leaves them as they were.
+        private ProfileStats dayVa = new ProfileStats(); private double openH = double.NaN, openL = double.NaN;
+        private double tpoH = double.NaN, tpoL = double.NaN;   // the TPO session's high and low: its Poor High and Poor Low
+        private Profile mm; private DateTime pmMinutes = DateTime.MinValue;   // the month's minutes: the prior month's value when complete
         private double pdH = double.NaN, pdL = double.NaN, pdO = double.NaN, pwH = double.NaN, pwL = double.NaN, pmH = double.NaN, pmL = double.NaN, weekOpen = double.NaN;
         private double rthH = double.NaN, rthL = double.NaN, rthO = double.NaN, rthPreviousOpen = double.NaN, ibH = double.NaN, ibL = double.NaN, ibWorkH, ibWorkL;
         private double ovnH = double.NaN, ovnL = double.NaN, settle = double.NaN, spike = double.NaN, preH = double.NaN, preL = double.NaN, frozenH, frozenL;
@@ -573,9 +588,10 @@ namespace TatankaTrading.AmtToolkit
         private double lastMacroClose = double.NaN;
         public int RowMult { get { return rowMult; } }
         private double RowStep(int mult) { return Math.Max(Step * mult, S.mvp_row_size); }
-        // Daily and prior-month profiles keep the plain Row Size at 1x, as before.
-        private double ValueStep(int mult) { return mult > 1 ? Math.Max(S.mvp_row_size, Step * mult) : S.mvp_row_size; }
-        private double NakedStep(int mult) { return (S.amt_vauto ? Step : S.amt_vres ? S.amt_res_val : Step) * mult; }
+        // The prior day's and month's rows: the drawn profile's (GC's 0.25 Row Size is 0.5 rows there: on 0.1 ticks).
+        private double ValueStep(int mult) { return RowStep(mult); }
+        // nPOC rows: the drawn profile's (CL's 0.05 auto tick drew a weekly nPOC off the weekly profile's POC), or the resolution set.
+        private double NakedStep(int mult) { return !S.amt_vauto && S.amt_vres ? S.amt_res_val * mult : RowStep(mult); }
         private double BlockStep(int mult) { return Step * Math.Max(1, S.sp_ticks_per_block) * mult; }
         public Engine(Settings s, string root, double tick, double initialClose, int minutes)
         {
@@ -584,12 +600,13 @@ namespace TatankaTrading.AmtToolkit
             main = new Profile(RowStep(rowMult), s.MaxProfileRows); day = new Profile(ValueStep(rowMult), s.MaxProfileRows);
             macro = new Profile(ValueStep(rowMult), s.MaxProfileRows);
             nd = new Profile(NakedStep(rowMult), s.MaxProfileRows); nw = new Profile(NakedStep(rowMult), s.MaxProfileRows); nm = new Profile(NakedStep(rowMult), s.MaxProfileRows);
+            mm = new Profile(RowStep(rowMult), s.MaxProfileRows);
             spStep = BlockStep(rowMult);
             Levels = Level.Parse(s.lvl_text);
         }
         public Engine Clone()
         {
-            var e = (Engine)MemberwiseClone(); e.day = day.Clone(); e.main = main.Clone(); e.macro = macro.Clone(); e.nd = nd.Clone(); e.nw = nw.Clone(); e.nm = nm.Clone();
+            var e = (Engine)MemberwiseClone(); e.day = day.Clone(); e.main = main.Clone(); e.macro = macro.Clone(); e.nd = nd.Clone(); e.nw = nw.Clone(); e.nm = nm.Clone(); e.mm = mm.Clone();
             e.Levels = Levels.Select(x => x.Clone()).ToList(); e.naked = new List<Naked>(naked); e.single = new List<ZoneItem>(single); e.poor = new List<Poor>(poor);
             e.tpo = tpo.ToDictionary(x => x.Key, x => x.Value.Clone()); e.profiles = new List<PastProfile>(profiles); e.tpoOrder = new Queue<long>(tpoOrder);
             return e;
@@ -642,12 +659,16 @@ namespace TatankaTrading.AmtToolkit
             if (t == null || (t.Poc == prevDay.Poc && t.Vah == prevDay.Vah && t.Val == prevDay.Val)) return false;
             prevDay = t;
             TickProfile();
-            if (MathEx.Valid(rthO) && rthStart >= dayStart) { outsideAbove = rthO > prevDay.Vah; outsideBelow = rthO < prevDay.Val; }
+            if (valueRolled) return true;   // the session just closed: today's own value, not the one today is measured against
+            dayVa = prevDay;
+            if (MathEx.Valid(rthO)) { outsideAbove = rthO > dayVa.Vah; outsideBelow = rthO < dayVa.Val; }
             // today's 80% Rule was worked out on the minutes' value area: it starts over from here on the ticks' (v1.2.1)
             rule = false; vaEntry = null;
             return true;
         }
         public DateTime DayStart { get { return dayStart; } }
+        // After the close's roll the value refreshed is the closed session's own: today's 80% Rule fill stays as it is.
+        public bool ValueRolled { get { return valueRolled; } }
         private bool Was(string session) { return previous != null && MathEx.InSession(previous.Start, session); }
         private static double Max(double a, double b) { return MathEx.Valid(a) ? Math.Max(a, b) : b; }
         private static double Min(double a, double b) { return MathEx.Valid(a) ? Math.Min(a, b) : b; }
@@ -696,7 +717,7 @@ namespace TatankaTrading.AmtToolkit
         {
             if (macroKey != key)
             {
-                if (macroKey != DateTime.MinValue && macroFull) prevMonth = macro.Stats(S.mvp_val_pct);
+                if (macroKey != DateTime.MinValue && macroFull && macroKey != pmMinutes) prevMonth = macro.Stats(S.mvp_val_pct);
                 macroFull = macroKey != DateTime.MinValue; macro = new Profile(ValueStep(MathEx.RowMult(S.row_scale, lastPrice, Step)), S.MaxProfileRows); macroKey = key;
             }
         }
@@ -710,10 +731,16 @@ namespace TatankaTrading.AmtToolkit
             bool rth = MathEx.InSession(b.Start, "0830-1500"), ib = MathEx.InSession(b.Start, S.ib_session), ovn = MathEx.InSession(b.Start, S.amt_sess);
             bool pdSession = MathEx.InSession(b.Start, S.pd_sess_time), track = MathEx.InSession(b.Start, S.context_session), table = MathEx.InSession(b.Start, S.tbl_session);
             bool spikeWindow = MathEx.InSession(b.Start, S.spikeTimeRange), spSession = MathEx.InSession(b.Start, S.sp_rth_session);
+            // The value area's session just closed (or a new trade date began on an RTH-only chart): the prior day's value
+            // and its drawn profile are the closed session's from here, from its trades when they are worked out (v1.2.2).
+            if (Was(S.cc_sess_def) && (newDay || !MathEx.InSession(b.Start, S.cc_sess_def)) && dayFull && day.Rows.Count > 0)
+            {
+                prevDay = DayValue(); valueRolled = true; vaRolledAt = b.Start;
+            }
             if (newDay)
             {
-                if (pdNext) { if (S.pd_use_rth) { pdH = pdNextH; pdL = pdNextL; } pdO = pdNextO; pdNext = false; }
-                if (td != DateTime.MinValue && dayFull && day.Rows.Count > 0) prevDay = DayValue(); else lastVaFirst = DateTime.MinValue;
+                if (!valueRolled) { if (td != DateTime.MinValue && dayFull && day.Rows.Count > 0) prevDay = DayValue(); else lastVaFirst = DateTime.MinValue; }
+                valueRolled = false; dayVa = prevDay;
                 if (!S.pd_use_rth && td != DateTime.MinValue) { pdH = tradeH; pdL = tradeL; }
                 NakedRoll(nd, "Daily", dayFull, S.npoc_d_show, S.npoc_w_d, b.Start);
                 dayFull = td != DateTime.MinValue || MathEx.Minute(b.Start) == 1020;
@@ -735,9 +762,15 @@ namespace TatankaTrading.AmtToolkit
             else { weekH = Max(weekH, b.High); weekL = Min(weekL, b.Low); }
             if (newMonth)
             {
-                if (monthFull) { pmH = monthH; pmL = monthL; }
+                if (monthFull)
+                {
+                    pmH = monthH; pmL = monthL;
+                    // a whole month of minutes: its value as its profile and nPOC have it, not the 30-minute bars'
+                    if (mm.Rows.Count > 0) { prevMonth = mm.Stats(S.mvp_val_pct); pmMinutes = month; }
+                }
                 NakedRoll(nm, "Monthly", monthFull, S.npoc_m_show, S.npoc_w_m, b.Start);
                 monthFull = month != DateTime.MinValue; month = m; monthStart = b.Start; monthH = b.High; monthL = b.Low; nm = new Profile(NakedStep(rowMult), S.MaxProfileRows);
+                mm = new Profile(RowStep(rowMult), S.MaxProfileRows);
             }
             else { monthH = Max(monthH, b.High); monthL = Min(monthL, b.Low); }
             // Naked POC profiles use the 1-minute bars inside this chart bar, so they don't move
@@ -746,22 +779,22 @@ namespace TatankaTrading.AmtToolkit
                 foreach (Bar one in subbars != null && subbars.Count > 0 ? subbars : (IList<Bar>)new[] { b })
                 { if (S.npoc_d_show) nd.Add(one, false); if (S.npoc_w_show) nw.Add(one, false); if (S.npoc_m_show) nm.Add(one, false); }
             for (int i = naked.Count - 1; i >= 0; i--) if (b.Low <= naked[i].Price && b.High >= naked[i].Price) { if (S.npoc_alert) Event(f, "nPOC" + naked[i].Kind + Price(naked[i].Price), naked[i].Kind + " nPOC Touch @ " + Price(naked[i].Price)); naked.RemoveAt(i); }
-            if (ovn && S.amt_enable)
+            if (ovn)   // kept with OVN High/Low off too: the day type reads them (they're drawn and alert only when on)
             {
                 if (!Was(S.amt_sess) || newDay) { ovnH = b.High; ovnL = b.Low; }
                 else { ovnH = Max(ovnH, b.High); ovnL = Min(ovnL, b.Low); }
             }
+            if (Was(S.pd_sess_time) && (newDay || !pdSession))
+            {
+                // the pd session just closed: pdHigh, pdLow and pdOpen are its own from here, as pdPOC/pdVAH/pdVAL are the
+                // value area's at its close (the same 15:00 by default: every pd line switches together)
+                if (S.pd_use_rth) { pdH = rthH; pdL = rthL; }
+                pdO = rthPreviousOpen; pdRolledAt = b.Start;
+            }
             if (pdSession)
             {
-                if (!Was(S.pd_sess_time)) { rthH = b.High; rthL = b.Low; rthPreviousOpen = b.Open; }
+                if (!Was(S.pd_sess_time) || newDay) { rthH = b.High; rthL = b.Low; rthPreviousOpen = b.Open; }
                 else { rthH = Max(rthH, b.High); rthL = Min(rthL, b.Low); }
-            }
-            if (!pdSession && Was(S.pd_sess_time))
-            {
-                // pdHigh, pdLow and pdOpen switch with pdPOC, pdVAH and pdVAL, at the next trade date's open: every pd line is
-                // the same day's (they switched at the RTH close, two hours before the value: v1.2.1)
-                pdNextH = rthH; pdNextL = rthL; pdNextO = rthPreviousOpen; pdNext = true;
-                if (newDay) { if (S.pd_use_rth) { pdH = pdNextH; pdL = pdNextL; } pdO = pdNextO; pdNext = false; }
             }
             if (daily != null) { if (!MathEx.Valid(pdH)) pdH = daily.High; if (!MathEx.Valid(pdL)) pdL = daily.Low; }
             if (!rth && Was("0830-1500"))
@@ -774,6 +807,7 @@ namespace TatankaTrading.AmtToolkit
             // Latch only while overnight bars are being counted, so the prior night's counts can't latch against a new settlement.
             if (globex && imbalance && !resolved) trap = true;
             if (trap && b.Low <= settle && b.High >= settle) { trap = false; resolved = true; }
+            if (globex) inventoryFrozen = Inventory();   // OVN INVENTORY as the count stood at its last overnight bar (it read 08:15's, before the trap resolved)
             if (S.inv_alert && S.inv_enable && trap && !trapAlert && MathEx.Minute(b.Start) >= S.inv_end_h * 60 + S.inv_end_m && MathEx.Minute(b.Start) < S.inv_end_h * 60 + S.inv_end_m + 30)
             { Event(f, "Inventory", "Inventory Trap Active @ " + Price(settle)); trapAlert = true; }
             if (ib)
@@ -781,15 +815,19 @@ namespace TatankaTrading.AmtToolkit
                 if (!Was(S.ib_session) || newDay) { ibH = ibL = double.NaN; ibStart = b.Start; ibWorkH = b.High; ibWorkL = b.Low; }
                 else { ibWorkH = Math.Max(ibWorkH, b.High); ibWorkL = Math.Min(ibWorkL, b.Low); }
             }
-            if (!ib && Was(S.ib_session) && S.ib_enable) { ibH = ibWorkH; ibL = ibWorkL; }
-            if (track && (!Was(S.context_session) || newDay)) inventoryFrozen = Inventory();
-            if (MathEx.InSession(b.Start, S.cc_sess_def) && (!Was(S.cc_sess_def) || newDay)) rthO = b.Open;
+            if (!ib && Was(S.ib_session)) { ibH = ibWorkH; ibL = ibWorkL; }   // with Enable IB off too: the day type reads it (drawn only when on)
             if (rth && (!Was("0830-1500") || newDay))
             {
                 rthStart = b.Start; preH = preL = double.NaN; dayH = b.High; dayL = b.Low; auction = false; otfUp = otfDn = 0;
-                double openPrice = MathEx.Valid(rthO) ? rthO : b.Open;
-                isTrapDay = S.inv_enable && imbalance; gapUp = MathEx.Valid(pdH) && openPrice > pdH; gapDown = MathEx.Valid(pdL) && openPrice < pdL;
-                outsideAbove = MathEx.Valid(prevDay.Vah) && openPrice > prevDay.Vah; outsideBelow = MathEx.Valid(prevDay.Val) && openPrice < prevDay.Val;
+                isTrapDay = S.inv_enable && imbalance;
+                if (!MathEx.Valid(rthO)) gapUp = gapDown = outsideAbove = outsideBelow = false;   // the value area's session opens later: its open decides these
+            }
+            if (MathEx.InSession(b.Start, S.cc_sess_def) && (!Was(S.cc_sess_def) || newDay))
+            {
+                // the open OPEN, the gap test and the 80% Rule all measure ("RTH Session for VA"'s first bar)
+                rthO = b.Open; openH = pdH; openL = pdL;
+                gapUp = MathEx.Valid(pdH) && b.Open > pdH; gapDown = MathEx.Valid(pdL) && b.Open < pdL;
+                outsideAbove = MathEx.Valid(dayVa.Vah) && b.Open > dayVa.Vah; outsideBelow = MathEx.Valid(dayVa.Val) && b.Open < dayVa.Val;
             }
             if (rth && !spikeWindow) { preH = Max(preH, b.High); preL = Min(preL, b.Low); }
             if (spikeWindow && !Was(S.spikeTimeRange)) { frozenH = preH; frozenL = preL; spikeStart = b.Start; }
@@ -813,6 +851,7 @@ namespace TatankaTrading.AmtToolkit
             // Prior-day value is built from the RTH Session for VA only (08:30-15:00 CT by default), the Dalton convention.
             foreach (Bar q in Aggregate(raw, calc))
             {
+                mm.Add(q, true);
                 if (mainWindow) main.Add(q, true);
                 if (S.cc_enable && MathEx.InSession(q.Start, S.cc_sess_def)) { day.Add(q, true); if (vaFirst == DateTime.MinValue) vaFirst = q.Start; vaEnd = q.End; }
             }
@@ -827,17 +866,18 @@ namespace TatankaTrading.AmtToolkit
             f.RthVwap = S.vwap_enable && vwin && vVol > 0 ? vSrc / vVol : double.NaN;
             double dtr = daily == null ? double.NaN : Math.Max(tradeH - tradeL, Math.Max(Math.Abs(tradeH - daily.Close), Math.Abs(tradeL - daily.Close)));
             f.DailyAtr = daily != null && MathEx.Valid(daily.Atr) ? (daily.Atr * (S.daily_atr_length - 1) + dtr) / S.daily_atr_length : double.NaN;
-            double zoneAtr = daily != null && MathEx.Valid(daily.Atr14) ? (daily.Atr14 * 13 + dtr) / 14 : double.NaN;
+            double zoneAtr = f.DailyAtr;   // the level zones' ATR is the Daily ATR Period's, as the dashboard's (it was always 14)
             if (rth) Classify(b, dailyVwap, f.DailyAtr);
             if (track)
             {
                 Level pivot = Levels.FirstOrDefault(x => x.Kind == 0);
                 if (pivot != null) { double z = (MathEx.Valid(f.DailyAtr) ? f.DailyAtr : 1) * .005; pivotBias = b.Close > pivot.Price + z ? "BULLISH" : b.Close < pivot.Price - z ? "BEARISH" : "AT PIVOT"; }
             }
-            f.RuleActive = S.cc_enable && MathEx.Valid(rthO) && (rthO > prevDay.Vah || rthO < prevDay.Val);
+            ProfileStats va = dayVa;   // the value in force at today's open (after the close the pd lines are today's own)
+            f.RuleActive = S.cc_enable && MathEx.Valid(rthO) && (rthO > va.Vah || rthO < va.Val);
             if (f.RuleActive && pdSession)
             {
-                if (b.Close < prevDay.Vah && b.Close > prevDay.Val)
+                if (b.Close < va.Vah && b.Close > va.Val)
                 {
                     if (!vaEntry.HasValue) vaEntry = b.Start;
                     if (!rule && (b.Start - vaEntry.Value).TotalMinutes >= 60) { rule = true; if (S.cc_alert_80) Event(f, "Rule80", "80% Rule Confirmed"); }
@@ -845,7 +885,7 @@ namespace TatankaTrading.AmtToolkit
                 else if (!rule) vaEntry = null;
             }
             if (!pdSession && !rule) vaEntry = null;
-            f.RuleConfirmed = rule; f.VaHigh = prevDay.Vah; f.VaLow = prevDay.Val;
+            f.RuleConfirmed = rule; f.VaHigh = va.Vah; f.VaLow = va.Val;
             double flip = MathEx.Valid(zoneAtr) ? zoneAtr * S.lvl_flip_atr : 0;
             foreach (Level l in Levels)
             {
@@ -856,20 +896,24 @@ namespace TatankaTrading.AmtToolkit
                 }
                 Cross(f, l.Name, l.Price, S.lvl_alerts && (l.Kind == 0 ? S.lvl_alert_ip : l.Kind == -1 ? S.lvl_alert_bull : S.lvl_alert_bear), false, LevelZoneHalfWidth(zoneAtr));
             }
+            // each armed only while its line is drawn (OVN after its lines go, a section switched off: v1.2.2)
             Cross(f, "IBH", ibH, S.ib_enable && S.ib_alert_ibh && !ib && MathEx.InSession(b.Start, S.ib_alert_time), false);
             Cross(f, "IBL", ibL, S.ib_enable && S.ib_alert_ibl && !ib && MathEx.InSession(b.Start, S.ib_alert_time), false);
-            Cross(f, "OVN High", ovnH, S.amt_enable && S.amt_alert_ovn && !ovn, false); Cross(f, "OVN Low", ovnL, S.amt_enable && S.amt_alert_ovn && !ovn, false);
+            bool ovnDrawn = OvnDrawn(b.Start, ovn);
+            Cross(f, "OVN High", ovnH, ovnDrawn && S.amt_alert_ovn, false); Cross(f, "OVN Low", ovnL, ovnDrawn && S.amt_alert_ovn, false);
             Cross(f, "RTH VWAP", f.RthVwap, S.vwap_alert && vwin && pvwin, true);
-            Cross(f, "PDH", pdH, S.pd_alert_hl, false); Cross(f, "PDL", pdL, S.pd_alert_hl, false);
-            Cross(f, "pwHigh", pwH, S.pw_alert_hl, false); Cross(f, "pwLow", pwL, S.pw_alert_hl, false); Cross(f, "Weekly Open", weekOpen, S.wk_alert_open, false);
-            Cross(f, "pdPOC", prevDay.Poc, S.cc_alert_va, false); Cross(f, "pdVAH", prevDay.Vah, S.cc_alert_va, false); Cross(f, "pdVAL", prevDay.Val, S.cc_alert_va, false);
-            bool da = S.mvp_use_cur_alerts && MathEx.InSession(b.Start, S.mvp_alert_time);
-            Cross(f, "Developing POC", dev.Poc, da, true); Cross(f, "Developing VAH", dev.Vah, da, true); Cross(f, "Developing VAL", dev.Val, da, true);
-            Cross(f, "pmPOC", prevMonth.Poc, S.macro_alert_lvl, false); Cross(f, "pmVAH", prevMonth.Vah, S.macro_alert_lvl, false); Cross(f, "pmVAL", prevMonth.Val, S.macro_alert_lvl, false);
-            Cross(f, "pmHigh", pmH, S.macro_alert_lvl, false); Cross(f, "pmLow", pmL, S.macro_alert_lvl, false);
+            Cross(f, "PDH", pdH, S.pd_alert_hl && S.pd_enable && S.pd_showH, false); Cross(f, "PDL", pdL, S.pd_alert_hl && S.pd_enable && S.pd_showL, false);
+            Cross(f, "pwHigh", pwH, S.pw_alert_hl && S.pw_enable && S.pw_showH, false); Cross(f, "pwLow", pwL, S.pw_alert_hl && S.pw_enable && S.pw_showL, false);
+            Cross(f, "Weekly Open", weekOpen, S.wk_alert_open && S.wk_showOpen, false);
+            bool cc = S.cc_alert_va && S.cc_enable;
+            Cross(f, "pdPOC", prevDay.Poc, cc && S.cc_show_poc, false); Cross(f, "pdVAH", prevDay.Vah, cc && S.cc_show_vah, false); Cross(f, "pdVAL", prevDay.Val, cc && S.cc_show_val, false);
+            bool da = S.mvp_use_cur_alerts && S.mvp_master && MathEx.InSession(b.Start, S.mvp_alert_time);
+            Cross(f, "Developing POC", dev.Poc, da && S.mvp_show_poc, true); Cross(f, "Developing VAH", dev.Vah, da && S.mvp_show_vah, true); Cross(f, "Developing VAL", dev.Val, da && S.mvp_show_val, true);
+            Cross(f, "pmPOC", prevMonth.Poc, S.macro_alert_lvl && S.macro_show_poc, false); Cross(f, "pmVAH", prevMonth.Vah, S.macro_alert_lvl && S.macro_show_month, false); Cross(f, "pmVAL", prevMonth.Val, S.macro_alert_lvl && S.macro_show_month, false);
+            Cross(f, "pmHigh", pmH, S.macro_alert_lvl && S.macro_show_hl, false); Cross(f, "pmLow", pmL, S.macro_alert_lvl && S.macro_show_hl, false);
             if (table && !Was(S.tbl_session)) { tableH = b.High; tableL = b.Low; } else if (table) { tableH = Math.Max(tableH, b.High); tableL = Math.Min(tableL, b.Low); }
             PruneStructures();
-            rowsPruned |= new[] { day, main, macro, nd, nw, nm }.Any(p => p.PrunedRows > 0);
+            rowsPruned |= new[] { day, main, macro, nd, nw, nm, mm }.Any(p => p.PrunedRows > 0);
             BuildVisuals(f, dev, zoneAtr, table, ovn, ib);
             if (rowsPruned) f.Warning += " Row limit reached: oldest rows pruned; profile/TPO values use retained rows.";
             if (structuresPruned) f.Warning += " Structure limit reached: oldest structures pruned.";
@@ -879,11 +923,12 @@ namespace TatankaTrading.AmtToolkit
         private void UpdateTpo(Bar b, bool active)
         {
             bool was = Was(S.sp_rth_session), ended = !active && was;
-            if (active && !was) { tpo.Clear(); tpoOrder.Clear(); single.RemoveAll(x => x.Live); tpoPeriod = -1; spStep = BlockStep(rowMult); }
+            if (active && !was) { tpo.Clear(); tpoOrder.Clear(); single.RemoveAll(x => x.Live); tpoPeriod = -1; spStep = BlockStep(rowMult); tpoH = tpoL = double.NaN; }
             int pid = MathEx.Minute(b.Start) / Math.Max(1, S.sp_tpo_minutes);
             bool newPeriod = active && pid != tpoPeriod;
             if (active)
             {
+                tpoH = Max(tpoH, b.High); tpoL = Min(tpoL, b.Low);
                 long lo = (long)Math.Floor(b.Low / spStep), hi = (long)Math.Floor(b.High / spStep);
                 if (hi - lo + 1 > S.MaxProfileRows) { lo = hi - S.MaxProfileRows + 1; rowsPruned = true; }
                 for (long k = lo; k <= hi; k++)
@@ -911,12 +956,13 @@ namespace TatankaTrading.AmtToolkit
                 }
                 if (S.sp_show_poor)
                 {
-                    double hp = (high + 1) * spStep, lp = low * spStep;
+                    double hp = tpoH, lp = tpoL;   // at the session's high and low (the high was drawn a block above it: one tick on ES)
                     if (tpo[high].Hits >= 2 && !poor.Any(x => x.High && Math.Abs(x.Price - hp) < Step * 2)) poor.Add(new Poor { High = true, Price = hp, Start = tpo[high].First, Created = b.Start });
                     if (tpo[low].Hits >= 2 && !poor.Any(x => !x.High && Math.Abs(x.Price - lp) < Step * 2)) poor.Add(new Poor { High = false, Price = lp, Start = tpo[low].First, Created = b.Start });
                 }
             }
-            single.RemoveAll(x => (!x.Live && (b.Start - x.Created).TotalDays > S.sp_max_days) || (x.Top > b.Low && x.Bottom < b.High));
+            // a single print fills when a bar trades in its row [Bottom, Top): its price traded from below fills it too
+            single.RemoveAll(x => (!x.Live && (b.Start - x.Created).TotalDays > S.sp_max_days) || (x.Top > b.Low && x.Bottom <= b.High));
             poor.RemoveAll(x => (b.Start - x.Created).TotalDays > S.sp_max_days || (x.High ? b.High > x.Price : b.Low < x.Price));
         }
         private void Classify(Bar b, double vwap, double dailyAtr)
@@ -929,8 +975,9 @@ namespace TatankaTrading.AmtToolkit
             else if (MathEx.Valid(h) && MathEx.Valid(l))
             {
                 double range = dayH - dayL, ibRange = h - l, ext = ibRange > 0 ? range / ibRange : 0, pos = range > 0 ? (b.Close - dayL) / range : .5;
-                bool bu = dayH > h, bd = dayL < l, cvh = b.Close > prevDay.Vah, cvl = b.Close < prevDay.Val;
-                bool iu = dayH > pdH || (dayH > ovnH && cvh), id = dayL < pdL || (dayL < ovnL && cvl);
+                bool bu = dayH > h, bd = dayL < l, cvh = b.Close > dayVa.Vah, cvl = b.Close < dayVa.Val;
+                double ph = MathEx.Valid(rthO) ? openH : pdH, pl = MathEx.Valid(rthO) ? openL : pdL;   // the pd high and low today's open was measured against
+                bool iu = dayH > ph || (dayH > ovnH && cvh), id = dayL < pl || (dayL < ovnL && cvl);
                 bool tu = bu && pos > .75 && vwap > (h + l) / 2 && (otfUp >= 5 || iu) && ext > 1.5;
                 bool tl = bd && pos < .25 && vwap < (h + l) / 2 && (otfDn >= 5 || id) && ext > 1.5;
                 tu |= iu && pos > .8 && ext > 2; tl |= id && pos < .2 && ext > 2;
@@ -1011,10 +1058,17 @@ namespace TatankaTrading.AmtToolkit
             if (s.StartsWith("SHORT") || s == "Below pdVAL") return AmtPalette.RedSoft;
             return AmtPalette.Gray;
         }
+        // OVN High/Low are drawn (and alert) after the overnight session, until Delete OVN Lines At's time.
+        private bool OvnDrawn(DateTime t, bool ovn)
+        {
+            return S.amt_enable && !ovn && MathEx.Minute(t) < int.Parse(S.amt_del_sess.Substring(0, 2)) * 60 + int.Parse(S.amt_del_sess.Substring(2, 2));
+        }
+        // Today's open against the pd values in force at it (after the close the pd lines are today's own).
         private string OpenLocation()
         {
-            if (!MathEx.Valid(rthO) || !MathEx.Valid(pdH) || !MathEx.Valid(pdL)) return "---";
-            return rthO > pdH ? "Above pdHigh" : rthO < pdL ? "Below pdLow" : rthO > prevDay.Vah ? "Above pdVAH" : rthO < prevDay.Val ? "Below pdVAL" : MathEx.Valid(prevDay.Vah) ? "Inside Value" : "---";
+            ProfileStats va = dayVa;
+            if (!MathEx.Valid(rthO) || !MathEx.Valid(openH) || !MathEx.Valid(openL)) return "---";
+            return rthO > openH ? "Above pdHigh" : rthO < openL ? "Below pdLow" : rthO > va.Vah ? "Above pdVAH" : rthO < va.Val ? "Below pdVAL" : MathEx.Valid(va.Vah) ? "Inside Value" : "---";
         }
         private void BuildVisuals(Frame f, ProfileStats dev, double zoneAtr, bool table, bool ovn, bool ib)
         {
@@ -1032,23 +1086,26 @@ namespace TatankaTrading.AmtToolkit
                 if (S.ib_show_mid) Line(f, "IB Midpoint", (ibH + ibL) / 2, ibStart, S.ib_col_mid, S.ib_lvl_width, S.ib_style_int, S.ib_lbl_offset, S.ib_label_size, S.ib_show_labels, S.ib_extend, S.ib_txt_c);
                 for (int i = n; i < f.Lines.Count; i++) f.Lines[i].End = end;
             }
-            if (S.amt_enable && !ovn && MathEx.Minute(now) < int.Parse(S.amt_del_sess.Substring(0, 2)) * 60 + int.Parse(S.amt_del_sess.Substring(2, 2)))
+            if (OvnDrawn(now, ovn))
             {
                 Line(f, "OVN High", ovnH, rthStart, S.amt_c_hi, S.amt_width, S.amt_style_in, S.amt_offset, S.amt_lb_size_in, S.amt_showLb, "None");
                 Line(f, "OVN Low", ovnL, rthStart, S.amt_c_lo, S.amt_width, S.amt_style_in, S.amt_offset, S.amt_lb_size_in, S.amt_showLb, "None");
                 foreach (LineItem l in f.Lines.Where(x => x.Name.StartsWith("OVN"))) l.TextColor = l.Name.EndsWith("High") ? S.amt_c_txt_hi : S.amt_c_txt_lo;
             }
+            // pd lines from the trade date's open, or from the close they switched at (the closed session's own: the chart
+            // keeps the lines they replaced over the day before it)
+            DateTime pdStart = pdRolledAt > dayStart ? pdRolledAt : dayStart, vaStart = vaRolledAt > dayStart ? vaRolledAt : dayStart, hlStart = S.pd_use_rth ? pdStart : dayStart;
             if (S.pd_enable)
             {
-                if (S.pd_showH) Line(f, "pdHigh", pdH, dayStart, S.pd_high_c, S.pd_high_width, S.pd_style_in, S.pd_offset_val, S.pd_lb_size_in, true, "None", S.pd_txt_c);
-                if (S.pd_showL) Line(f, "pdLow", pdL, dayStart, S.pd_low_c, S.pd_low_width, S.pd_style_in, S.pd_offset_val, S.pd_lb_size_in, true, "None", S.pd_txt_c);
-                if (S.pd_showOpen) Line(f, "pdOpen", pdO, dayStart, S.pd_open_c, S.pd_open_width, S.pd_style_in, S.pd_offset_val, S.pd_lb_size_in, true, "None", S.pd_txt_c);
+                if (S.pd_showH) Line(f, "pdHigh", pdH, hlStart, S.pd_high_c, S.pd_high_width, S.pd_style_in, S.pd_offset_val, S.pd_lb_size_in, true, "None", S.pd_txt_c);
+                if (S.pd_showL) Line(f, "pdLow", pdL, hlStart, S.pd_low_c, S.pd_low_width, S.pd_style_in, S.pd_offset_val, S.pd_lb_size_in, true, "None", S.pd_txt_c);
+                if (S.pd_showOpen) Line(f, "pdOpen", pdO, pdStart, S.pd_open_c, S.pd_open_width, S.pd_style_in, S.pd_offset_val, S.pd_lb_size_in, true, "None", S.pd_txt_c);
             }
             if (S.cc_enable)
             {
-                if (S.cc_show_poc) Line(f, "pdPOC", prevDay.Poc, dayStart, S.pd_poc_c, S.cc_poc_width, S.cc_poc_style_in, S.cc_lb_offset, S.cc_lb_size_in, true, "None", S.cc_txt_c);
-                if (S.cc_show_vah) Line(f, "pdVAH", prevDay.Vah, dayStart, S.pd_vah_c, S.cc_vah_width, S.cc_poc_style_in, S.cc_lb_offset, S.cc_lb_size_in, true, "None", S.cc_txt_c);
-                if (S.cc_show_val) Line(f, "pdVAL", prevDay.Val, dayStart, S.pd_val_c, S.cc_val_width, S.cc_poc_style_in, S.cc_lb_offset, S.cc_lb_size_in, true, "None", S.cc_txt_c);
+                if (S.cc_show_poc) Line(f, "pdPOC", prevDay.Poc, vaStart, S.pd_poc_c, S.cc_poc_width, S.cc_poc_style_in, S.cc_lb_offset, S.cc_lb_size_in, true, "None", S.cc_txt_c);
+                if (S.cc_show_vah) Line(f, "pdVAH", prevDay.Vah, vaStart, S.pd_vah_c, S.cc_vah_width, S.cc_poc_style_in, S.cc_lb_offset, S.cc_lb_size_in, true, "None", S.cc_txt_c);
+                if (S.cc_show_val) Line(f, "pdVAL", prevDay.Val, vaStart, S.pd_val_c, S.cc_val_width, S.cc_poc_style_in, S.cc_lb_offset, S.cc_lb_size_in, true, "None", S.cc_txt_c);
             }
             if (S.cc_showOpen) Line(f, "dOpen", rthO, rthStart, S.cc_c_open, S.cc_open_width, S.cc_open_style, S.cc_open_offset, S.cc_open_lb_size, true, "None", S.opens_txt_c);
             if (S.wk_showOpen) Line(f, "wkOpen", weekOpen, weekStart, S.wk_c_open, S.wk_open_width, S.wk_open_style, S.wk_open_offset, S.wk_open_lb_size, true, "None", S.opens_txt_c);
@@ -1750,7 +1807,7 @@ namespace TatankaTrading.AmtToolkit
                     bool wasInside = Math.Abs(p.Close - p.Center) <= p.Width;
                     bool inside = Math.Abs(close - l.Price) <= l.HalfWidth;
                     if ((mode == "Zone Entry" || mode == "Both") && !wasInside && inside)
-                        result.Add(new Notice { Key = l.Name + "Zone", Text = l.Name + " Zone Entry @ " + MathEx.Price(l.Price, root, tick) + " (±" + MathEx.Price(l.HalfWidth, root, tick) + ")" });
+                        result.Add(new Notice { Key = l.Name + "Zone", Text = l.Name + " Zone Entry @ " + MathEx.Price(l.Price, root, tick) + " (±" + MathEx.Width(l.HalfWidth, tick) + ")" });
                 }
                 points[l.Name] = new Point { Close = close, Center = l.Price, Width = l.HalfWidth, Enabled = l.Enabled };
             }
@@ -2001,17 +2058,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private DateTime lastPreview = DateTime.MinValue, lastMacro = DateTime.MinValue, lastLevelsRead = DateTime.MinValue;
         private Bar pending;
         private Frame previousFrame;
-        private List<LineItem> pdBeforeRoll;
-        private static bool IsRollingPd(LineItem x) { return x.Name == "pdHigh" || x.Name == "pdLow" || x.Name == "pdOpen"; }
-        private static bool PdRolled(Frame a, Frame b)
-        {
-            foreach (LineItem x in a.Lines.Where(z => IsRollingPd(z)))
-            {
-                LineItem y = b.Lines.FirstOrDefault(z => z.Name == x.Name);
-                if (y != null && Math.Abs(y.Price - x.Price) > 1e-9) return true;
-            }
-            return false;
-        }
         private int committed = -1, firstLiveBar = int.MaxValue;
         private volatile Snapshot snapshot;
         private sealed class Sample
@@ -2061,7 +2107,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     samples = new RenderHistory<Sample>(50000); histogramCache = new ProfileHistogramCache();
                     historicalLines = new List<LineItem>(); publishedHistory = null; terminated = false;
                     sent = new HashSet<string>(); alertTimes = new Queue<DateTime>();
-                    engine = null; pending = null; previousFrame = null; pdBeforeRoll = null; snapshot = null; committed = -1; firstLiveBar = int.MaxValue;
+                    engine = null; pending = null; previousFrame = null; snapshot = null; committed = -1; firstLiveBar = int.MaxValue;
                     capWarned = false; fault = settingsWarning = discordSetupWarning = "";
                     levelsSource = new LevelFileSource(); levelAlerts = new LevelAlertTracker();
                     // A property-grid clone may share copied fields before DataLoaded.
@@ -2102,7 +2148,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (discord != null) discord.Dispose();
                         // NinjaTrader can retain a terminated indicator instance. Release
                         // its histories and profiles without touching property-grid clones.
-                        snapshot = null; previousFrame = null; pdBeforeRoll = null; pending = null; engine = null; daily = null;
+                        snapshot = null; previousFrame = null; pending = null; engine = null; daily = null;
                         samples = null; histogramCache = null; historicalLines = null; publishedHistory = null;
                         minuteBars = null; macroBars = null; levelsSource = null; levelAlerts = null;
                         sent = null; alertTimes = null; runtimeOwner = null;
@@ -2266,7 +2312,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
         // Engine.TradeValue: the session's trades in [first, end), or null for its minutes (not downloaded, an older
         // day, or fewer contracts than its 1-minute bars: incomplete). The load waits for a requested session up to
-        // tickWaitUntil; live it never waits (the next roll comes two hours after the close).
+        // tickWaitUntil; live it never waits (asked for at the close, they replace the minutes' value when they come).
         private List<KeyValuePair<double, double>> TickValue(DateTime first, DateTime end, double minuteVolume)
         {
             if (tickDays == null) return null;
@@ -2298,7 +2344,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (engine.RefreshPrevDay())
                     {
                         // today's 80% Rule fill was drawn from the minutes' value area: cleared, drawn again from here on
-                        DateTime from = engine.DayStart; samples.RemoveWhere(x => x.Bar.Start >= from);
+                        // (after the close the refreshed value is the closed session's own, not today's reference)
+                        if (!engine.ValueRolled) { DateTime from = engine.DayStart; samples.RemoveWhere(x => x.Bar.Start >= from); }
                         if (pending != null) { Preview(false); if (ChartControl != null) ForceRefresh(); }
                     }
                 }
@@ -2327,15 +2374,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             DrainMacro(pending.End);
             Frame f = CalculateFrame(engine, pending);
             bool sameDay = previousFrame != null && MathEx.TradingDate(previousFrame.Bar.Start) == MathEx.TradingDate(f.Bar.Start);
-            // pdHigh, pdLow and pdOpen switch to the session that just closed at 15:00. Keep the lines as they stood
-            // before that switch, so each day's history shows the values that were in force during that day.
-            if (sameDay && pdBeforeRoll == null && PdRolled(previousFrame, f)) pdBeforeRoll = previousFrame.Lines.Where(x => IsRollingPd(x)).ToList();
-            if (previousFrame != null && !sameDay)
+            // A pd line that switched to the closed session at its close starts there from then on: keep it as it stood
+            // over the day before it, at once. A finished day's IB, open and pd lines are kept at the next trade date.
+            List<LineItem> keep = null;
+            if (sameDay)
+                keep = previousFrame.Lines.Where(x => x.Name.StartsWith("pd") && f.Lines.Any(y => y.Name == x.Name && y.Start != x.Start)).ToList();
+            else if (previousFrame != null)
+                keep = previousFrame.Lines.Where(x => x.Name.StartsWith("IB ") || x.Name == "dOpen" || x.Name.StartsWith("pd")).ToList();
+            if (keep != null && keep.Count > 0)
             {
-                IEnumerable<LineItem> dayLines = previousFrame.Lines.Where(x => x.Name.StartsWith("IB ") || x.Name == "dOpen" || (x.Name.StartsWith("pd") && (pdBeforeRoll == null || !IsRollingPd(x))));
-                if (pdBeforeRoll != null) dayLines = dayLines.Concat(pdBeforeRoll);
-                historicalLines.AddRange(dayLines.Select(x => new LineItem { Name = x.Name, Price = x.Price, Start = x.Start, End = x.End, Color = x.Color, Width = x.Width, Style = x.Style, Label = false }));
-                pdBeforeRoll = null;
+                historicalLines.AddRange(keep.Select(x => new LineItem { Name = x.Name, Price = x.Price, Start = x.Start, End = x.End, Color = x.Color, Width = x.Width, Style = x.Style, Label = false }));
                 historicalLines.RemoveAll(x => (f.Bar.Start - x.End).TotalDays > 20);
                 publishedHistory = null;
             }
@@ -3659,7 +3707,7 @@ public string amt_lb_size_in { get; set; }
 public int amt_offset { get; set; }
 [Display(Name="Alert OVN Break", GroupName="5. Overnight High/Low", Order=84)]
 public bool amt_alert_ovn { get; set; }
-[Display(Name="Auto Bin Size (tick)", GroupName="14. Naked POCs", Order=224)]
+[Display(Name="Auto Bin Size (profile rows)", Description = "Naked POCs from the volume profile's rows, so each sits on its profile's POC. Off with Use Manual Bin Size: the size set.", GroupName="14. Naked POCs", Order=224)]
 public bool amt_vauto { get; set; }
 [Display(Name="Use Manual Bin Size", GroupName="14. Naked POCs", Order=225)]
 public bool amt_vres { get; set; }

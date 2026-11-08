@@ -69,7 +69,7 @@ TradingView:
 
 NinjaTrader has no auto-update.
 
-1. Compare the version in the Toolkit's dashboard header (**Tatanka AMT v1.2.1**), or the version line at the top of each `.cs` file, with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
+1. Compare the version in the Toolkit's dashboard header (**Tatanka AMT v1.2.2**), or the version line at the top of each `.cs` file, with the [latest release](https://github.com/TatankaTrading/tatanka-indicators/releases/latest).
 2. Download the new zip and import it the same way. Accept the overwrite.
 3. Reload the chart (F5).
 
