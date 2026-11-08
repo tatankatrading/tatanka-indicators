@@ -612,22 +612,24 @@ namespace TatankaTrading.AmtToolkit
             return Profile.FromPrices(Tick > 0 ? Tick : Step, prices).Stats(S.cc_va_pct);
         }
         private static string Hours(string session) { return (session ?? "").Split(':')[0].Trim(); }   // "0830-1500:23456": its hours
-        // The prior day's drawn profile from the same trades as its pdPOC/pdVAH/pdVAL (v1.2.1): its rows from them, its
-        // value area worked out at one-tick rows as the lines are, so the shaded area ends where the lines are (at the
-        // same Value Area %). Only a Session profile on the value area's own hours is that day's.
+        // The prior day's drawn profile from the same trades as its pdPOC/pdVAH/pdVAL (v1.2.1), at one-tick rows as the
+        // lines are worked out: its tallest row is pdPOC and its shaded area ends at pdVAH and pdVAL (at the same Value
+        // Area %), whatever the Row Scale (NQ's 5-tick rows, CL's 0.25 floor). Only a Session profile on the value area's
+        // own hours is that day's.
         private void TickProfile()
         {
             if (dayTicks == null || S.mvp_tf_mode != "Session" || Hours(S.mvp_sess_time) != Hours(S.cc_sess_def)) return;
-            ProfileStats stats = Profile.FromPrices(Tick > 0 ? Tick : Step, dayTicks).Stats(S.mvp_val_pct);
+            double tickStep = Tick > 0 ? Tick : Step;
             if (main.Rows.Count > 0 && mainStart.Date == dayTicksFirst.Date)
             {
-                main = Profile.FromPrices(main.Step, dayTicks, main.Limit); mainStats = stats; return;
+                main = Profile.FromPrices(tickStep, dayTicks, main.Limit); mainStats = main.Stats(S.mvp_val_pct); return;
             }
             for (int i = profiles.Count - 1; i >= 0; i--)
             {
                 PastProfile p = profiles[i];
                 if (p.Start.Date != dayTicksFirst.Date) continue;
-                profiles[i] = new PastProfile { Profile = Profile.FromPrices(p.Profile.Step, dayTicks, p.Profile.Limit), Stats = stats, Start = p.Start, End = p.End, EndIndex = p.EndIndex };
+                Profile ticks = Profile.FromPrices(tickStep, dayTicks, p.Profile.Limit);
+                profiles[i] = new PastProfile { Profile = ticks, Stats = ticks.Stats(S.mvp_val_pct), Start = p.Start, End = p.End, EndIndex = p.EndIndex };
                 return;
             }
         }
@@ -640,8 +642,11 @@ namespace TatankaTrading.AmtToolkit
             prevDay = t;
             TickProfile();
             if (MathEx.Valid(rthO) && rthStart >= dayStart) { outsideAbove = rthO > prevDay.Vah; outsideBelow = rthO < prevDay.Val; }
+            // today's 80% Rule was worked out on the minutes' value area: it starts over from here on the ticks' (v1.2.1)
+            rule = false; vaEntry = null;
             return true;
         }
+        public DateTime DayStart { get { return dayStart; } }
         private bool Was(string session) { return previous != null && MathEx.InSession(previous.Start, session); }
         private static double Max(double a, double b) { return MathEx.Valid(a) ? Math.Max(a, b) : b; }
         private static double Min(double a, double b) { return MathEx.Valid(a) ? Math.Min(a, b) : b; }
@@ -1129,6 +1134,12 @@ namespace TatankaTrading.AmtToolkit
             items.Enqueue(item); published = null;
         }
         public T[] Snapshot() { return published ?? (published = items.ToArray()); }
+        public void RemoveWhere(Func<T, bool> drop)
+        {
+            T[] keep = items.Where(x => !drop(x)).ToArray();
+            if (keep.Length == items.Count) return;
+            items.Clear(); foreach (T x in keep) items.Enqueue(x); published = null;
+        }
     }
 
     public sealed class ProfileHistogram
@@ -2274,7 +2285,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (terminated || engine == null || fault.Length != 0) return;
                 tickArrived = false;
-                try { if (engine.RefreshPrevDay() && pending != null) { Preview(false); if (ChartControl != null) ForceRefresh(); } }
+                try
+                {
+                    if (engine.RefreshPrevDay())
+                    {
+                        // today's 80% Rule fill was drawn from the minutes' value area: cleared, drawn again from here on
+                        DateTime from = engine.DayStart; samples.RemoveWhere(x => x.Bar.Start >= from);
+                        if (pending != null) { Preview(false); if (ChartControl != null) ForceRefresh(); }
+                    }
+                }
                 catch (Exception ex) { Fail(ex); }
             }
         }
